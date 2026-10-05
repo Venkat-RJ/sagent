@@ -18,6 +18,8 @@ from wesearch.paper.custom_types import PaperRecord
 from wesearch.paper.errors import PaperError
 from wesearch.paper.search import SearchResult
 
+import pytest
+
 from sagent.tools import paper_search
 from sagent.tools.paper_search import PaperSearch, _empty_hint
 
@@ -199,6 +201,68 @@ def test_run_limit_caps_rendered_hits() -> None:
     assert "P0" in result.content
     assert "P1" in result.content
     assert "P4" not in result.content
+
+
+@pytest.mark.parametrize("has_hits", [False, True])
+def test_run_incomplete_results_differ_and_recover(*, has_hits: bool) -> None:
+    """Expose incomplete coverage without losing records or caching it."""
+    _clear_cache()
+    records = (
+        [PaperRecord(title="Known Paper", sources=("openalex",))] if has_hits else []
+    )
+    args: MutableJSON = {"query": "rare topic", "source": "fused"}
+    with patch(
+        "sagent.tools.paper_search.search",
+        side_effect=[_result(records, complete=False), _result(records)],
+    ) as mock_search:
+        tool = PaperSearch()
+        incomplete = asyncio.run(tool.run(args))
+        complete = asyncio.run(tool.run(args))
+        cached = asyncio.run(tool.run(args))
+
+    assert not incomplete.is_error
+    assert not complete.is_error
+    assert not cached.is_error
+    assert mock_search.call_count == 2
+    assert complete.content == cached.content
+    assert incomplete.content != complete.content
+    assert incomplete.content.startswith(
+        "Search coverage is incomplete; returned records may omit "
+        "matches from the queried sources.\n",
+    )
+    assert "Search coverage is incomplete" not in complete.content
+    if has_hits:
+        assert incomplete.content.split("\n", 1)[1] == complete.content
+        assert "Known Paper" in incomplete.content
+        assert "sources: openalex" in incomplete.content
+    else:
+        assert "(no results in the retrieved portion)" in incomplete.content
+        assert "PaperAuthor" in incomplete.content
+        assert "every query term" not in incomplete.content
+        assert "has no match" not in incomplete.content
+        assert complete.content.startswith("(no results)")
+        assert "every query term" in complete.content
+
+
+@pytest.mark.parametrize("source", ["s2", "openalex", "fused", "searxng"])
+def test_run_incomplete_limit_notice_is_cause_neutral(source: str) -> None:
+    """A result limit can mark successful retrieval incomplete too."""
+    _clear_cache()
+    record = PaperRecord(title="Limited Paper", sources=("s2",))
+    with patch(
+        "sagent.tools.paper_search.search",
+        return_value=_result([record], total=2, complete=False),
+    ):
+        result = asyncio.run(
+            PaperSearch().run({"query": "limit probe", "source": source, "limit": 1}),
+        )
+    assert not result.is_error
+    assert result.content.startswith(
+        "Search coverage is incomplete; returned records may omit "
+        "matches from the queried sources.\n",
+    )
+    assert "Limited Paper" in result.content
+    assert "showing 1 of 2" in result.content
 
 
 # ---------------------------------------------------------------------------

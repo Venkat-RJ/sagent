@@ -244,7 +244,7 @@ class PaperSearch:
         else:
             lines = [format_record(r, abstract_chars=abstract_chars) for r in shown]
             text = "\n".join(lines) + truncation_notice(len(shown), total)
-        if not complete:
+        if not complete and (not shown or total <= len(shown)):
             text = (
                 "Search coverage is incomplete; returned records may omit "
                 "matches from the queried sources.\n" + text

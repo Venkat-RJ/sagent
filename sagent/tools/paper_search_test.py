@@ -203,8 +203,15 @@ def test_run_limit_caps_rendered_hits() -> None:
     assert "P4" not in result.content
 
 
-@pytest.mark.parametrize("has_hits", [False, True])
-def test_run_incomplete_results_differ_and_recover(*, has_hits: bool) -> None:
+@pytest.mark.parametrize(
+    ("has_hits", "total"),
+    [(False, 0), (False, 2), (True, 0), (True, 1)],
+)
+def test_run_incomplete_results_differ_and_recover(
+    *,
+    has_hits: bool,
+    total: int,
+) -> None:
     """Expose incomplete coverage without losing records or caching it."""
     _clear_cache()
     records = (
@@ -213,7 +220,10 @@ def test_run_incomplete_results_differ_and_recover(*, has_hits: bool) -> None:
     args: MutableJSON = {"query": "rare topic", "source": "fused"}
     with patch(
         "sagent.tools.paper_search.search",
-        side_effect=[_result(records, complete=False), _result(records)],
+        side_effect=[
+            _result(records, total=total, complete=False),
+            _result(records, total=total),
+        ],
     ) as mock_search:
         tool = PaperSearch()
         incomplete = asyncio.run(tool.run(args))
@@ -245,22 +255,22 @@ def test_run_incomplete_results_differ_and_recover(*, has_hits: bool) -> None:
 
 
 @pytest.mark.parametrize("source", ["s2", "openalex", "fused", "searxng"])
-def test_run_incomplete_limit_notice_is_cause_neutral(source: str) -> None:
-    """A result limit can mark successful retrieval incomplete too."""
+def test_run_incomplete_truncated_results_keep_existing_notice(source: str) -> None:
+    """Avoid a duplicate coverage notice without caching incomplete results."""
     _clear_cache()
     record = PaperRecord(title="Limited Paper", sources=("s2",))
     with patch(
         "sagent.tools.paper_search.search",
         return_value=_result([record], total=2, complete=False),
-    ):
-        result = asyncio.run(
-            PaperSearch().run({"query": "limit probe", "source": source, "limit": 1}),
-        )
+    ) as mock_search:
+        args: MutableJSON = {"query": "limit probe", "source": source, "limit": 1}
+        result = asyncio.run(PaperSearch().run(args))
+        repeated = asyncio.run(PaperSearch().run(args))
     assert not result.is_error
-    assert result.content.startswith(
-        "Search coverage is incomplete; returned records may omit "
-        "matches from the queried sources.\n",
-    )
+    assert not repeated.is_error
+    assert result.content == repeated.content
+    assert mock_search.call_count == 2
+    assert "Search coverage is incomplete" not in result.content
     assert "Limited Paper" in result.content
     assert "showing 1 of 2" in result.content
 

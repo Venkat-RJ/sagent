@@ -57,10 +57,7 @@ __all__ = [
 # The default window's ``""`` is filtered out -- no id carries it.
 CONTEXT_TAGS: Final[tuple[ContextTag, ...]] = tuple(
     t
-    for t in cast(
-        tuple[ContextTag, ...],
-        get_args(cast(object, ContextTag.__value__)),
-    )
+    for t in cast(tuple[ContextTag, ...], get_args(cast(object, ContextTag.__value__)))
     if t
 )
 """Window-size suffixes a model id may carry (e.g. ``...+1m``)."""
@@ -138,7 +135,7 @@ class ModelTable(Mapping[str, ModelCapability]):
 
     @override
     def __getitem__(self, key: str) -> ModelCapability:
-        row = self._named(self.roles.get(key, key))
+        row = self._resolved(key)
         if row is None:
             raise KeyError(key)
         return row
@@ -153,9 +150,7 @@ class ModelTable(Mapping[str, ModelCapability]):
 
     @override
     def __contains__(self, key: object) -> bool:
-        return (
-            isinstance(key, str) and self._named(self.roles.get(key, key)) is not None
-        )
+        return isinstance(key, str) and self._resolved(key) is not None
 
     def exact(self, name: str) -> ModelCapability | None:
         """Return the row whose exact name or wire id is ``name``, never a guess.
@@ -174,6 +169,11 @@ class ModelTable(Mapping[str, ModelCapability]):
         if row is not None:
             return row
         return next((row for row in self.rows if row.wire_model_id == name), None)
+
+    def _resolved(self, key: str) -> ModelCapability | None:
+        """Return the row ``key`` names, in the module's precedence order."""
+        row = self.exact(key)
+        return row if row is not None else self._named(self.roles.get(key, key))
 
     # A prefix names a whole family, optionally with a major: ``opus`` and
     # ``opus-5`` name ``opus-*``; ``opu`` names nothing, and ``gemini-flash``

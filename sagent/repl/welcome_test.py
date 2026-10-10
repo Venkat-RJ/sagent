@@ -285,7 +285,9 @@ def test_interrupted_sweep_restores_terminal_cursor(
 
 
 @pytest.mark.parametrize("width", [16, 40, 56, 80, 120])
-def test_border_contains_identity_and_project_but_not_greeting(width: int) -> None:
+def test_terminal_width_border_contains_identity_commands_and_greeting(
+    width: int,
+) -> None:
     stream = io.StringIO()
     console = Console(
         file=stream, force_terminal=True, record=True, width=width, height=24
@@ -298,13 +300,11 @@ def test_border_contains_identity_and_project_but_not_greeting(width: int) -> No
     top = next(i for i, line in enumerate(lines) if line.startswith("╭"))
     bottom = next(i for i, line in enumerate(lines) if line.startswith("╰"))
     frame = lines[top : bottom + 1]
-    assert all(
-        cell_len(line) == min(width, welcome._BANNER_WIDTH + 4) for line in frame
-    )
+    assert all(cell_len(line) == width for line in frame)
     assert all(line.startswith("│ ") and line.endswith(" │") for line in frame[1:-1])
     assert "project" in "\n".join(frame)
-    assert "/help" in "\n".join(lines[bottom + 1 :])
-    assert "scientist!" in "\n".join(lines[bottom + 1 :])
+    assert "/help" in "\n".join(frame)
+    assert "scientist!" in "\n".join(frame)
     assert all(cell_len(line) <= width for line in lines)
 
 

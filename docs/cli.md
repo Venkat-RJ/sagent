@@ -17,8 +17,8 @@ sagent --provider Google --model gemini-pro-3.1
 The public package defaults to API-key auth with `--auth env`. Provider API keys are read from the provider's environment variable.
 
 Interactive startup shows a blue text-cell SAGENT banner, the resolved model,
-provider, and working folder labeled `project` inside a muted border. The
-`/help`, `/tasks`, and `/quit` hints and greeting sit outside the border. Long paths
+provider, working folder labeled `project`, command hints, and greeting inside
+a muted border spanning the terminal width. The typing prompt sits below it. Long paths
 show an ellipsis for omitted ancestors while keeping the project suffix.
 It waits for your input
 without making a model request for the welcome screen. The terminal background

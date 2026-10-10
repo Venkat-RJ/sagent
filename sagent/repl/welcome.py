@@ -85,7 +85,7 @@ def render_welcome(
         and console.height >= 22
     )
     framed = not console.is_dumb_terminal and console.width >= 16
-    frame_width = min(console.width, _BANNER_WIDTH + 4)
+    frame_width = console.width
 
     def framed_rows(rows: list[Text]) -> list[Text]:
         return _frame_rows(
@@ -130,10 +130,10 @@ def render_welcome(
         print_rows([Text("Resuming your session.")])
     print_rows([Text()])
     home = Path.home()  # noqa: TID251 -- Display abbreviation only, not a per-user storage location.
-    # Keep metadata within the wordmark's measure on spacious terminals.
+    # Keep metadata inside the terminal frame.
     # Never crop a model ID; long IDs/providers fold normally. Folder paths
     # explicitly mark omitted ancestors, preserving the project suffix.
-    value_width = max(1, min(frame_width - (14 if framed else 12), _BANNER_WIDTH - 10))
+    value_width = max(1, frame_width - (14 if framed else 12))
     display_folder = _folder_label(
         folder, home=home, width=value_width, unicode_ok=unicode_ok
     )
@@ -152,14 +152,14 @@ def render_welcome(
         row = Text(f"{label:<10}", style="dim")
         row.append(value, style="not dim")
         print_rows([row])
+    print_rows([Text()])
+    print_rows([Text("/help commands   /tasks agents   /quit exit", style="dim")])
+    if not resumed:
+        print_rows([Text()])
+        print_rows([Text("Hello, scientist! What are we doing today?")])
     if framed:
         left, horizontal, right = ("╰", "─", "╯") if unicode_ok else ("+", "-", "+")
         console.print(Text(left + horizontal * (frame_width - 2) + right, style="dim"))
-    console.print()
-    console.print(Text("  /help commands   /tasks agents   /quit exit", style="dim"))
-    console.print()
-    if not resumed:
-        console.print(Text("  Hello, scientist! What are we doing today?"))
     console.print()
 
 

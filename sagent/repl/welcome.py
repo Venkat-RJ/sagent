@@ -108,18 +108,12 @@ def render_welcome(
             motif.append("━━ ", style=color)
         motif.append(" rekursiv.ai", style="dim")
         console.print(motif)
-        console.print()
     else:
         heading = Text("  SAGENT", style=f"bold {_BLUE}")
         heading.append("  rekursiv.ai", style="dim")
         console.print(heading)
-    console.print(
-        Text(
-            "  Resuming your session."
-            if resumed
-            else "  Turn questions into experiments.",
-        ),
-    )
+    if resumed:
+        console.print(Text("  Resuming your session."))
     console.print()
     home = Path.home()  # noqa: TID251 -- Display abbreviation only, not a per-user storage location.
     # Keep metadata within the wordmark's measure on spacious terminals.

@@ -51,7 +51,6 @@ def _render(
 def test_fresh_terminal_has_banner_actual_metadata_and_invitation() -> None:
     out = _render()
     assert "███████" in out
-    assert "Turn questions into experiments." in out
     assert "test-model" in out
     assert "TestProvider" in out
     assert "/research" in out

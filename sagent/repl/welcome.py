@@ -61,12 +61,12 @@ _LOOP = (
 
 def print_welcome(
     *,
-    model: str,
-    provider: str,
+    model: str = "",
+    provider: str = "",
     folder: Path,
     resumed: bool = False,
 ) -> None:
-    """Print startup before prompt-toolkit owns the terminal."""
+    """Print identity and help before credentials or prompt-toolkit are needed."""
     render_welcome(
         Console(stderr=True),
         model=model,
@@ -80,8 +80,8 @@ def print_welcome(
 def render_welcome(
     console: Console,
     *,
-    model: str,
-    provider: str,
+    model: str = "",
+    provider: str = "",
     folder: Path,
     resumed: bool = False,
     animate: bool = False,
@@ -94,7 +94,8 @@ def render_welcome(
     Rich honors NO_COLOR; body text inherits the terminal foreground.
     """
     if not console.is_terminal:
-        console.print(Text(f"[{provider}] {model}"))
+        if model:
+            console.print(Text(f"[{provider}] {model}"))
         return
     unicode_ok = _supports_blocks(console.encoding)
     large = (
@@ -161,10 +162,10 @@ def render_welcome(
         "AnthropicCLI": "Anthropic CLI",
         "LlamaCpp": "Llama.cpp",
     }.get(provider, provider)
-    metadata = [("model", model), ("provider", display_provider)]
+    metadata = [("model", model), ("provider", display_provider)] if model else []
     separator = " · " if unicode_ok else " / "
     combined = model + separator + display_provider
-    if Text(combined).cell_len <= value_width:
+    if model and Text(combined).cell_len <= value_width:
         metadata = [("model", combined)]
     metadata.append(("project", display_folder))
     for label, value in metadata:
@@ -172,18 +173,20 @@ def render_welcome(
         row.append(value, style="not dim")
         print_rows([row])
     print_rows([Text()])
+    shell_help = Text("sagent --help", style="bold")
+    shell_help.append(" startup options", style="dim not bold")
+    print_rows([shell_help])
     print_rows(_command_rows(max(1, content_width)))
     if framed:
         print_rows([Text()])
         left, horizontal, right = ("╰", "─", "╯") if unicode_ok else ("+", "-", "+")
         console.print(Text(left + horizontal * (frame_width - 2) + right, style="dim"))
     console.print()
-    if not resumed:
-        indent = " " * (_FRAME_PADDING + 1 if framed else 2)
-        greeting = Text("Hello, scientist! What are we doing today?")
-        for line in greeting.wrap(console, max(1, console.width - len(indent))):
-            console.print(Text(indent) + line)
-        console.print()
+    indent = " " * (_FRAME_PADDING + 1 if framed else 2)
+    greeting = Text("Hello, scientist! What are we doing today?")
+    for line in greeting.wrap(console, max(1, console.width - len(indent))):
+        console.print(Text(indent) + line)
+    console.print()
 
 
 def _banner_rows(phase: int | None = None) -> list[Text]:

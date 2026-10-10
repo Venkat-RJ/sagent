@@ -480,6 +480,12 @@ def main() -> int:
         primary=args.provider if explicit else None,
         from_resume=resumed_provider and not args.provider_explicit,
     )
+    headless = not sys.stdin.isatty()
+    if not headless:
+        print_welcome(
+            folder=Path(loaded_session[2].bash_cwd) if loaded_session else Path.cwd(),
+            resumed=loaded_session is not None,
+        )
     try:
         provider, model, resolved_auth = _build_provider_model(
             args,
@@ -511,8 +517,6 @@ def main() -> int:
             tool_state,
         )
     compactor = SummaryCompactor() if args.compact else None
-
-    headless = not sys.stdin.isatty()
 
     tool_names = args.tools or DEFAULT_TOOLS
     agent_tools = resolve_tools(
@@ -561,12 +565,7 @@ def main() -> int:
     agent.tool_state.additional_dirs = list(args.add_dir)
 
     if not headless:
-        print_welcome(
-            model=model_recipe.model_id,
-            provider=model_recipe.provider,
-            folder=Path(agent.tool_state.bash_cwd),
-            resumed=loaded_session is not None,
-        )
+        sys.stderr.write(f"[{model_recipe.provider}] {model_recipe.model_id}\n")
         if args.output_format != "text":
             sys.stderr.write(
                 "Note: --output-format is ignored in interactive REPL mode.\n",

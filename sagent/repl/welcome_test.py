@@ -78,7 +78,29 @@ def test_resume_keeps_transcript_prominent() -> None:
     assert "SAGENT" in out
     assert "Resuming your session." in out
     assert "█" not in out
-    assert "Hello, scientist! What are we doing today?" not in out
+    assert "Hello, scientist! What are we doing today?" in out
+
+
+def test_welcome_without_configuration_has_identity_and_help() -> None:
+    stream = io.StringIO()
+    console = Console(
+        file=stream, force_terminal=True, width=80, height=24, record=True
+    )
+    render_welcome(console, folder=Path("/research"))
+    text = console.export_text(styles=False)
+    assert "███████" in text
+    assert "sagent --help" in text
+    assert "/help" in text
+    assert "/research" in text
+    assert "model" not in text
+    assert "provider" not in text
+    assert text.count("╭") == 1
+
+
+def test_redirected_unconfigured_welcome_is_silent() -> None:
+    stream = io.StringIO()
+    render_welcome(Console(file=stream, force_terminal=False), folder=Path("/research"))
+    assert stream.getvalue() == ""
 
 
 def test_redirected_output_retains_only_plain_model_line() -> None:

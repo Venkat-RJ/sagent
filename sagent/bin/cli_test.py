@@ -183,6 +183,7 @@ def test_main_welcome_precedes_repl_and_stays_out_of_headless(
         *_args: object,
         **_kwargs: object,
     ) -> tuple[_Provider, _ChildStubModel, str]:
+        events.append("provider")
         return _Provider(), model, "env"
 
     monkeypatch.setattr(cli, "_build_provider_model", _provider_model)
@@ -211,14 +212,55 @@ def test_main_welcome_precedes_repl_and_stays_out_of_headless(
     monkeypatch.setattr(cli, "_install_repl_logging", _logging)
     assert cli.main() == 0
     if interactive:
-        assert events == ["welcome", "repl"]
-        assert welcome[0]["model"] == "resolved-model"
+        assert events == ["welcome", "provider", "repl"]
+        assert "model" not in welcome[0]
         assert welcome[0]["resumed"] is resumed
         expected_folder = tmp_path / "restored-folder" if resumed else Path.cwd()
         assert welcome[0]["folder"] == expected_folder
     else:
-        assert events == ["headless"]
+        assert events == ["provider", "headless"]
         assert welcome == []
+
+
+@pytest.mark.parametrize("interactive", [True, False])
+@pytest.mark.parametrize(
+    "provider", [None, "Anthropic", "OpenAI", "Google", "AnthropicCLI"]
+)
+def test_missing_credentials_keep_welcome_and_existing_setup_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    interactive: bool,
+    provider: str | None,
+) -> None:
+    argv = ["sagent", "--ephemeral"]
+    if provider is not None:
+        argv.extend(["--provider", provider])
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: interactive)
+    monkeypatch.setattr(sessions, "migrate_legacy_home", lambda: None)
+    events: list[str] = []
+
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        events.append("provider")
+        raise FileNotFoundError("No credentials in this test")
+
+    def welcome(**kwargs: object) -> None:
+        events.append("welcome")
+        assert "model" not in kwargs
+
+    def unexpected_agent(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("An unconfigured session must not construct an agent")
+
+    monkeypatch.setattr("sagent.providers.providers.build_provider", unavailable)
+    monkeypatch.setattr(cli, "print_welcome", welcome)
+    monkeypatch.setattr(cli, "Agent", unexpected_agent)
+    assert cli.main() == 1
+    assert events[0] == ("welcome" if interactive else "provider")
+    assert events.count("welcome") == int(interactive)
+    error = capsys.readouterr().err
+    assert "Error:" in error
+    assert "Try one of:" in error
 
 
 def _child_record(**overrides: object) -> PersistentAgentRecord:

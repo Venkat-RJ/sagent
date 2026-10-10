@@ -29,6 +29,18 @@ input prompt. Set `SAGENT_NO_ANIMATION=1` to keep startup static. Resumed sessio
 compact layouts, redirected output, and `NO_COLOR` output remain static.
 Narrow, short, dumb, or non-Unicode terminals get a compact SAGENT heading.
 Resumed sessions use the compact heading before replaying the saved transcript.
+Welcome layout follows a terminal-cell grid:
+
+- The icon and wordmark form one rectangular block, separated by three cells.
+- The taller icon sets the block height; the wordmark starts on the same top row.
+- The frame has one empty row above and below its content, with one cell of
+  horizontal padding. Metadata and command hints share the same left edge.
+- The greeting stays outside the frame and aligns with that content edge.
+- Animation changes icon color only. Character positions, wordmark lettering,
+  and the three colored bars stay fixed during both laps.
+- The large block appears only when it fits. Compact terminals keep the text
+  heading, with no wrapped wordmark or animation.
+
 Piped input does not show a welcome screen. Redirected stderr keeps the plain
 provider/model line.
 

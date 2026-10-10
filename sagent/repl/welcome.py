@@ -48,7 +48,8 @@ _ICON = (
     "  ┗━━━━━━━┛",
 )
 _ICON_WIDTH = max(len(row) for row in _ICON)
-_IDENTITY_WIDTH = _ICON_WIDTH + 3 + _BANNER_WIDTH
+_ICON_GAP = 3
+_IDENTITY_WIDTH = _ICON_WIDTH + _ICON_GAP + _BANNER_WIDTH
 # Follow the open stroke from bottom left, around the page, to the arrow.
 _LOOP = (
     (5, 2),
@@ -120,6 +121,7 @@ def render_welcome(
     if framed:
         left, horizontal, right = ("╭", "─", "╮") if unicode_ok else ("+", "-", "+")
         console.print(Text(left + horizontal * (frame_width - 2) + right, style="dim"))
+        print_rows([Text()])
     if large:
         if animate and not console.no_color and console.color_system is not None:
             # Finish before prompt-toolkit takes ownership. Manual refresh keeps
@@ -172,6 +174,7 @@ def render_welcome(
     print_rows([Text()])
     print_rows([Text("/help commands   /tasks agents   /quit exit", style="dim")])
     if framed:
+        print_rows([Text()])
         left, horizontal, right = ("╰", "─", "╯") if unicode_ok else ("+", "-", "+")
         console.print(Text(left + horizontal * (frame_width - 2) + right, style="dim"))
     console.print()
@@ -195,11 +198,13 @@ def _banner_rows(phase: int | None = None) -> list[Text]:
             elif (row_index, column) in active:
                 style = f"bold {_BLUE}"
             lettering.append(char, style=style)
-        lettering.append("   ")
+        lettering.append(" " * _ICON_GAP)
         if row_index < len(_BANNER):
             for char in _BANNER[row_index]:
                 style = f"dim {_BLUE}" if char in _OUTLINE else _BLUE
                 lettering.append(char, style=style)
+        # Keep the lockup rectangular, including its final alignment row.
+        lettering.append(" " * (_IDENTITY_WIDTH - lettering.cell_len))
         rows.append(lettering)
     return rows
 

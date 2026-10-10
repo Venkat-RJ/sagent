@@ -356,7 +356,7 @@ def test_loop_frames_leave_wordmark_and_bars_unchanged() -> None:
         animated = welcome._banner_rows(phase)
         assert [row.plain for row in animated] == [row.plain for row in still]
         for static_row, animated_row in zip(still, animated, strict=True):
-            start = welcome._ICON_WIDTH + 3
+            start = welcome._ICON_WIDTH + welcome._ICON_GAP
             assert static_row[start:].spans == animated_row[start:].spans
         assert animated != still
 
@@ -405,3 +405,33 @@ def test_startup_completes_two_loop_laps(monkeypatch: pytest.MonkeyPatch) -> Non
     assert (
         welcome._LOOP[-1] in welcome._LOOP[max(0, expected[-1] - 3) : expected[-1] + 1]
     )
+
+
+@pytest.mark.parametrize("phase", [None, 0, 9, 24])
+def test_identity_keeps_a_rectangular_cell_grid(phase: int | None) -> None:
+    rows = welcome._banner_rows(phase)
+    assert all(row.cell_len == welcome._IDENTITY_WIDTH for row in rows)
+    wordmark_start = welcome._ICON_WIDTH + welcome._ICON_GAP
+    for row_index, row in enumerate(rows):
+        assert row.plain[welcome._ICON_WIDTH : wordmark_start] == "   "
+        if row_index < len(welcome._BANNER):
+            assert (
+                row.plain[wordmark_start:].rstrip()
+                == welcome._BANNER[row_index].rstrip()
+            )
+        else:
+            assert not row.plain[wordmark_start:].strip()
+
+
+def test_frame_has_equal_top_and_bottom_breathing_room() -> None:
+    stream = io.StringIO()
+    console = Console(
+        file=stream, force_terminal=True, record=True, width=80, height=24
+    )
+    render_welcome(
+        console, model="test-model", provider="TestProvider", folder=Path("/research")
+    )
+    lines = console.export_text(styles=False).splitlines()
+    top = next(i for i, line in enumerate(lines) if line.startswith("╭"))
+    bottom = next(i for i, line in enumerate(lines) if line.startswith("╰"))
+    assert lines[top + 1] == lines[bottom - 1] == "│" + " " * 78 + "│"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import io
 
+from rich.cells import cell_len
 from rich.console import Console
 
 import pytest
@@ -48,7 +49,7 @@ def _render(
 
 def test_fresh_terminal_has_banner_actual_metadata_and_invitation() -> None:
     out = _render()
-    assert "██████████" in out
+    assert "███████" in out
     assert "Turn questions into experiments." in out
     assert "test-model" in out
     assert "TestProvider" in out
@@ -56,6 +57,7 @@ def test_fresh_terminal_has_banner_actual_metadata_and_invitation() -> None:
     assert "What would you like to investigate?" in out
     assert "/help" in out
     assert "/quit" in out
+    assert "/tasks" in out
 
 
 @pytest.mark.parametrize(("width", "height"), [(40, 24), (80, 18)])
@@ -149,6 +151,26 @@ def test_literal_metadata_and_long_paths_fit_terminal() -> None:
     )
     plain = console.export_text(styles=False)
     assert "[red]literal-model[/red]" in plain
-    assert "[bold]" in plain
+    assert "…/" in plain
     assert "experiments" in plain
     assert all(len(line) <= 40 for line in plain.splitlines())
+
+
+def test_long_directory_name_and_wide_characters_fit_metadata() -> None:
+    stream = io.StringIO()
+    console = Console(file=stream, force_terminal=True, record=True, width=40)
+    render_welcome(
+        console,
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research/" + "研究" * 20 + "-project"),
+    )
+    plain = console.export_text(styles=False)
+    assert "…" in plain
+    assert "-project" in plain
+    assert all(cell_len(line) <= 40 for line in plain.splitlines())
+
+
+def test_literal_metadata_is_not_parsed_as_markup() -> None:
+    out = _render(folder=Path("/research/[bold]"))
+    assert "[bold]" in out

@@ -84,42 +84,56 @@ def render_welcome(
         and console.width >= _BANNER_WIDTH + 4
         and console.height >= 22
     )
+    framed = not console.is_dumb_terminal and console.width >= 16
+    frame_width = min(console.width, _BANNER_WIDTH + 4)
+
+    def framed_rows(rows: list[Text]) -> list[Text]:
+        return _frame_rows(
+            console, rows, width=frame_width, framed=framed, unicode_ok=unicode_ok
+        )
+
+    def print_rows(rows: list[Text]) -> None:
+        for row in framed_rows(rows):
+            console.print(row)
+
     console.print()
+    if framed:
+        left, horizontal, right = ("╭", "─", "╮") if unicode_ok else ("+", "-", "+")
+        console.print(Text(left + horizontal * (frame_width - 2) + right, style="dim"))
     if large:
         if animate and not console.no_color and console.color_system is not None:
             # Finish before prompt-toolkit takes ownership. Manual refresh keeps
             # this single sweep bounded and leaves no background refresh thread.
             with Live(
-                Group(*_banner_rows()),
+                Group(*framed_rows(_banner_rows())),
                 console=console,
                 auto_refresh=False,
                 redirect_stdout=False,
                 redirect_stderr=False,
             ) as live:
                 for column in range(-6, _BANNER_WIDTH + 6, 6):
-                    live.update(Group(*_banner_rows(column)), refresh=True)
+                    live.update(Group(*framed_rows(_banner_rows(column))), refresh=True)
                     time.sleep(0.025)
-                live.update(Group(*_banner_rows()), refresh=True)
+                live.update(Group(*framed_rows(_banner_rows())), refresh=True)
         else:
-            for lettering in _banner_rows():
-                console.print(lettering)
-        motif = Text("  ")
+            print_rows(_banner_rows())
+        motif = Text()
         for color in (_BLUE, _GREEN, _RED):
             motif.append("━━ ", style=color)
         motif.append(" rekursiv.ai", style="dim")
-        console.print(motif)
+        print_rows([motif])
     else:
-        heading = Text("  SAGENT", style=f"bold {_BLUE}")
+        heading = Text("SAGENT", style=f"bold {_BLUE}")
         heading.append("  rekursiv.ai", style="dim")
-        console.print(heading)
+        print_rows([heading])
     if resumed:
-        console.print(Text("  Resuming your session."))
-    console.print()
+        print_rows([Text("Resuming your session.")])
+    print_rows([Text()])
     home = Path.home()  # noqa: TID251 -- Display abbreviation only, not a per-user storage location.
     # Keep metadata within the wordmark's measure on spacious terminals.
     # Never crop a model ID; long IDs/providers fold normally. Folder paths
     # explicitly mark omitted ancestors, preserving the project suffix.
-    value_width = max(1, min(console.width - 12, _BANNER_WIDTH - 10))
+    value_width = max(1, min(frame_width - (14 if framed else 12), _BANNER_WIDTH - 10))
     display_folder = _folder_label(
         folder, home=home, width=value_width, unicode_ok=unicode_ok
     )
@@ -133,11 +147,14 @@ def render_welcome(
     combined = model + separator + display_provider
     if Text(combined).cell_len <= value_width:
         metadata = [("model", combined)]
-    metadata.append(("folder", display_folder))
+    metadata.append(("project", display_folder))
     for label, value in metadata:
-        row = Text(f"  {label:<10}", style="dim")
+        row = Text(f"{label:<10}", style="dim")
         row.append(value, style="not dim")
-        console.print(row, overflow="fold")
+        print_rows([row])
+    if framed:
+        left, horizontal, right = ("╰", "─", "╯") if unicode_ok else ("+", "-", "+")
+        console.print(Text(left + horizontal * (frame_width - 2) + right, style="dim"))
     console.print()
     console.print(Text("  /help commands   /tasks agents   /quit exit", style="dim"))
     console.print()
@@ -149,7 +166,7 @@ def render_welcome(
 def _banner_rows(highlight: int | None = None) -> list[Text]:
     rows: list[Text] = []
     for row in _BANNER:
-        lettering = Text("  ")
+        lettering = Text()
         for column, char in enumerate(row):
             style = f"dim {_BLUE}" if char in _OUTLINE else _BLUE
             if char == "█" and highlight is not None and abs(column - highlight) < 5:
@@ -159,9 +176,35 @@ def _banner_rows(highlight: int | None = None) -> list[Text]:
     return rows
 
 
+def _frame_rows(
+    console: Console,
+    rows: list[Text],
+    *,
+    width: int,
+    framed: bool,
+    unicode_ok: bool,
+) -> list[Text]:
+    """Wrap content inside a quiet border using terminal cell widths."""
+    if not framed:
+        return [Text("  ") + row for row in rows]
+    side = "│" if unicode_ok else "|"
+    content_width = width - 4
+    result: list[Text] = []
+    for row in rows:
+        for line in row.wrap(console, content_width, overflow="fold") or [Text()]:
+            framed_line = Text()
+            framed_line.append(side + " ", style="dim")
+            framed_line.append_text(line)
+            framed_line.append(
+                " " * (content_width - line.cell_len) + " " + side, style="dim"
+            )
+            result.append(framed_line)
+    return result
+
+
 def _supports_blocks(encoding: str) -> bool:
     try:
-        _ = "█╔╗╚╝═║━…".encode(encoding)
+        _ = "█╔╗╚╝═║━…╭╮╰╯─│".encode(encoding)
     except (LookupError, UnicodeEncodeError):
         return False
     return True

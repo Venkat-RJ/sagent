@@ -282,3 +282,47 @@ def test_interrupted_sweep_restores_terminal_cursor(
             animate=True,
         )
     assert "\x1b[?25h" in stream.getvalue()
+
+
+@pytest.mark.parametrize("width", [16, 40, 56, 80, 120])
+def test_border_contains_identity_and_project_but_not_greeting(width: int) -> None:
+    stream = io.StringIO()
+    console = Console(
+        file=stream, force_terminal=True, record=True, width=width, height=24
+    )
+    render_welcome(
+        console, model="test-model", provider="TestProvider", folder=Path("/research")
+    )
+    plain = console.export_text(styles=False)
+    lines = plain.splitlines()
+    top = next(i for i, line in enumerate(lines) if line.startswith("╭"))
+    bottom = next(i for i, line in enumerate(lines) if line.startswith("╰"))
+    frame = lines[top : bottom + 1]
+    assert all(
+        cell_len(line) == min(width, welcome._BANNER_WIDTH + 4) for line in frame
+    )
+    assert all(line.startswith("│ ") and line.endswith(" │") for line in frame[1:-1])
+    assert "project" in "\n".join(frame)
+    assert "/help" in "\n".join(lines[bottom + 1 :])
+    assert "scientist!" in "\n".join(lines[bottom + 1 :])
+    assert all(cell_len(line) <= width for line in lines)
+
+
+def test_dumb_terminal_has_no_border(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TERM", "dumb")
+    assert "╭" not in _render()
+
+
+def test_ascii_border_preserves_encoding() -> None:
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii")
+    render_welcome(
+        Console(file=stream, force_terminal=True, width=80),
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
+    )
+    stream.flush()
+    plain = raw.getvalue().decode("ascii")
+    assert "+---" in plain
+    assert "project" in plain

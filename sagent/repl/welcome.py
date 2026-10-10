@@ -39,13 +39,13 @@ _BANNER_WIDTH = max(len(row) for row in _BANNER)
 _OUTLINE = frozenset("╔╗╚╝═║")
 # Terminal adaptation of the supplied document-loop icon, with its three bars.
 _ICON = (
-    "  ╭───────╮",
-    "  ▼       │",
-    "━━━━━━    │",
-    "━━━━━     │",
-    "━━━━━━━   │",
-    "  ╷       │",
-    "  ╰───────╯",
+    "  ┏━━━━━━━┓",
+    "  ▼       ┃",
+    "██████    ┃",
+    "█████     ┃",
+    "███████   ┃",
+    "  ╻       ┃",
+    "  ┗━━━━━━━┛",
 )
 _ICON_WIDTH = max(len(row) for row in _ICON)
 _IDENTITY_WIDTH = _ICON_WIDTH + 3 + _BANNER_WIDTH
@@ -123,7 +123,7 @@ def render_welcome(
     if large:
         if animate and not console.no_color and console.color_system is not None:
             # Finish before prompt-toolkit takes ownership. Manual refresh keeps
-            # this single loop bounded and leaves no background refresh thread.
+            # these two loops bounded and leaves no background refresh thread.
             with Live(
                 Group(*framed_rows(_banner_rows())),
                 console=console,
@@ -131,9 +131,12 @@ def render_welcome(
                 redirect_stdout=False,
                 redirect_stderr=False,
             ) as live:
-                for phase in range(0, len(_LOOP), 3):
-                    live.update(Group(*framed_rows(_banner_rows(phase))), refresh=True)
-                    time.sleep(0.035)
+                for _lap in range(2):
+                    for phase in range(0, len(_LOOP), 3):
+                        live.update(
+                            Group(*framed_rows(_banner_rows(phase))), refresh=True
+                        )
+                        time.sleep(0.035)
                 live.update(Group(*framed_rows(_banner_rows())), refresh=True)
         else:
             print_rows(_banner_rows())
@@ -178,7 +181,7 @@ def render_welcome(
 
 
 def _banner_rows(phase: int | None = None) -> list[Text]:
-    """Keep the wordmark steady while one highlight follows the icon loop."""
+    """Keep the wordmark steady while a highlight follows the bold icon loop."""
     active: set[tuple[int, int]] = (
         set() if phase is None else set(_LOOP[max(0, phase - 3) : phase + 1])
     )
@@ -186,11 +189,11 @@ def _banner_rows(phase: int | None = None) -> list[Text]:
     for row_index, icon in enumerate(_ICON):
         lettering = Text()
         for column, char in enumerate(icon.ljust(_ICON_WIDTH)):
-            style = "dim"
-            if char == "━":
-                style = (_BLUE, _GREEN, _RED)[row_index - 2]
+            style = "bold"
+            if char == "█" and 2 <= row_index <= 4:
+                style = f"bold {(_BLUE, _GREEN, _RED)[row_index - 2]}"
             elif (row_index, column) in active:
-                style = _BLUE
+                style = f"bold {_BLUE}"
             lettering.append(char, style=style)
         lettering.append("   ")
         if row_index < len(_BANNER):
@@ -229,7 +232,7 @@ def _frame_rows(
 
 def _supports_blocks(encoding: str) -> bool:
     try:
-        _ = "█╔╗╚╝═║━…╭╮╰╯─│▼╷".encode(encoding)
+        _ = "█╔╗╚╝═║━…╭╮╰╯─│▼┏┓┗┛┃╻".encode(encoding)
     except (LookupError, UnicodeEncodeError):
         return False
     return True

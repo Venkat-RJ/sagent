@@ -23,7 +23,7 @@ show an ellipsis for omitted ancestors while keeping the project suffix.
 It waits for your input
 without making a model request for the welcome screen. The terminal background
 and body text follow your terminal settings; `NO_COLOR=1` disables color.
-Fresh color terminals show one brief highlight tracing the Rekursiv icon loop
+Fresh color terminals show a highlight tracing the bold Rekursiv icon loop twice
 to the left of the wordmark before the
 input prompt. Set `SAGENT_NO_ANIMATION=1` to keep startup static. Resumed sessions,
 compact layouts, redirected output, and `NO_COLOR` output remain static.

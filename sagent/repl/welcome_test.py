@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import io
 
@@ -13,6 +14,10 @@ import pytest
 
 from sagent.repl import welcome
 from sagent.repl.welcome import render_welcome
+
+
+if TYPE_CHECKING:
+    from rich.text import Text
 
 
 @pytest.fixture(autouse=True)
@@ -197,7 +202,7 @@ def test_loop_finishes_before_metadata_and_restores_cursor(
         animate=True,
     )
     out = stream.getvalue()
-    assert 0 < sum(delays) < 0.5
+    assert 0 < sum(delays) < 0.8
     assert "\x1b[?25l" in out
     assert out.index("\x1b[?25h") < out.index("test-model")
     assert out.count("test-model") == 1
@@ -340,9 +345,9 @@ def test_icon_is_left_of_wordmark_without_extra_brand_text() -> None:
     plain = console.export_text(styles=False)
     assert "rekursiv.ai" not in plain
     first = next(line for line in plain.splitlines() if "███████╗" in line)
-    assert first.index("╭") < first.index("███████╗")
+    assert first.index("┏") < first.index("███████╗")
     assert "▼" in plain
-    assert "━━━━━━" in plain
+    assert "██████    ┃" in plain
 
 
 def test_loop_frames_leave_wordmark_and_bars_unchanged() -> None:
@@ -364,3 +369,39 @@ def test_icon_and_wordmark_use_compact_layout_when_the_pair_would_wrap(
     assert "SAGENT" in out
     assert "█" not in out
     assert "rekursiv.ai" not in out
+
+
+def test_startup_completes_two_loop_laps(monkeypatch: pytest.MonkeyPatch) -> None:
+    phases: list[int] = []
+    original = welcome._banner_rows
+
+    def capture(phase: int | None = None) -> list[Text]:
+        if phase is not None:
+            phases.append(phase)
+        return original(phase)
+
+    monkeypatch.setattr(welcome, "_banner_rows", capture)
+
+    def no_delay(_seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr("sagent.repl.welcome.time.sleep", no_delay)
+    render_welcome(
+        Console(
+            file=io.StringIO(),
+            force_terminal=True,
+            color_system="truecolor",
+            no_color=False,
+            width=80,
+            height=24,
+        ),
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
+        animate=True,
+    )
+    expected = list(range(0, len(welcome._LOOP), 3))
+    assert phases == expected + expected
+    assert (
+        welcome._LOOP[-1] in welcome._LOOP[max(0, expected[-1] - 3) : expected[-1] + 1]
+    )

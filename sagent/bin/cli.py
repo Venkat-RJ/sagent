@@ -89,6 +89,7 @@ from sagent.providers.providers import (
 )
 from sagent.repl.render import error_text
 from sagent.repl.run_repl import run_repl
+from sagent.repl.welcome import print_welcome
 from sagent.thinking import (
     THINKING_COMMANDS,
     apply_thinking_command,
@@ -512,8 +513,6 @@ def main() -> int:
     compactor = SummaryCompactor() if args.compact else None
 
     headless = not sys.stdin.isatty()
-    if not headless:
-        sys.stderr.write(f"[{args.provider}] {model.tagged_model_id}\n")
 
     tool_names = args.tools or DEFAULT_TOOLS
     agent_tools = resolve_tools(
@@ -562,6 +561,12 @@ def main() -> int:
     agent.tool_state.additional_dirs = list(args.add_dir)
 
     if not headless:
+        print_welcome(
+            model=model_recipe.model_id,
+            provider=model_recipe.provider,
+            folder=Path(agent.tool_state.bash_cwd),
+            resumed=loaded_session is not None,
+        )
         if args.output_format != "text":
             sys.stderr.write(
                 "Note: --output-format is ignored in interactive REPL mode.\n",

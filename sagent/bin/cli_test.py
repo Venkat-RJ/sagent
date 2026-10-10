@@ -27,7 +27,7 @@ from sagent.agent.session_io import (
     load_persistent_agents,
     unpersisted_session_error,
 )
-from sagent.agent.state import agent_registry
+from sagent.agent.state import ToolState, agent_registry
 from sagent.bin import cli
 from sagent.bin.cli import (
     _DEFAULT_PROVIDER,
@@ -81,6 +81,8 @@ from sagent.types.runtime import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
+
+    from sagent.types.tape import TapeRecord
 
 
 _CWD: Final = Path(__file__).resolve().parent
@@ -142,6 +144,81 @@ class _ChildStubModel(MockModelCaps):
     max_request_tokens: int = 100_000
     max_response_tokens: int = 1_024
     supports_thinking: bool = True
+
+
+@pytest.mark.parametrize("interactive", [True, False])
+@pytest.mark.parametrize("resumed", [True, False])
+def test_main_welcome_precedes_repl_and_stays_out_of_headless(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    interactive: bool,
+    resumed: bool,
+) -> None:
+    """Exercise CLI routing with real Agent setup but no model generation."""
+    for key in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
+        monkeypatch.setenv(key, str(tmp_path / key))
+    monkeypatch.setattr(sys, "argv", ["sagent", "--tools", "none"])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: interactive)
+    monkeypatch.setattr(sessions, "migrate_legacy_home", lambda: None)
+    state = ToolState(bash_cwd=str(tmp_path / "restored-folder"))
+
+    def _session_dir(_args: argparse.Namespace) -> Path:
+        return tmp_path / "session"
+
+    def _loaded_session(
+        _path: Path,
+    ) -> tuple[SessionMeta, list[TapeRecord], ToolState] | None:
+        return (SessionMeta(), [], state) if resumed else None
+
+    monkeypatch.setattr(cli, "_resolve_session_dir", _session_dir)
+    monkeypatch.setattr(cli, "load_session", _loaded_session)
+    model = _ChildStubModel(model_id="resolved-model")
+
+    class _Provider:
+        async def close_sdk(self) -> None:
+            pass
+
+    def _provider_model(
+        *_args: object,
+        **_kwargs: object,
+    ) -> tuple[_Provider, _ChildStubModel, str]:
+        return _Provider(), model, "env"
+
+    monkeypatch.setattr(cli, "_build_provider_model", _provider_model)
+    events: list[str] = []
+    welcome: list[dict[str, object]] = []
+
+    def _welcome(**kwargs: object) -> None:
+        welcome.append(kwargs)
+        events.append("welcome")
+
+    async def _repl(agent: Agent, **_kwargs: object) -> None:
+        events.append("repl")
+        agent.shutdown(force=True)
+
+    async def _headless(agent: Agent, **_kwargs: object) -> None:
+        events.append("headless")
+        agent.shutdown(force=True)
+
+    monkeypatch.setattr(cli, "print_welcome", _welcome)
+    monkeypatch.setattr(cli, "run_repl", _repl)
+    monkeypatch.setattr(cli, "_run_headless", _headless)
+
+    def _logging(*_args: object, **_kwargs: object) -> None:
+        pass
+
+    monkeypatch.setattr(cli, "_install_repl_logging", _logging)
+    assert cli.main() == 0
+    if interactive:
+        assert events == ["welcome", "repl"]
+        assert welcome[0]["model"] == "resolved-model"
+        assert welcome[0]["resumed"] is resumed
+        expected_folder = tmp_path / "restored-folder" if resumed else Path.cwd()
+        assert welcome[0]["folder"] == expected_folder
+    else:
+        assert events == ["headless"]
+        assert welcome == []
 
 
 def _child_record(**overrides: object) -> PersistentAgentRecord:

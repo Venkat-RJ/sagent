@@ -1,23 +1,28 @@
 # CLI welcome review evidence
 
-Captured on 2026-10-10 in native macOS Terminal, using the same dark profile,
-font, window geometry, working directory, provider, and model for both versions.
-These are actual CLI screenshots, not mockups or rendered transcript images.
-The capture region excludes the window title bar. No screenshot pixels were
-retouched. Static screenshots show the final state, not the animation.
+Native macOS Terminal captures from 2026-10-10. These are actual CLI output,
+not mockups or transcript renders. No pixels were retouched. Captures exclude
+the title bar. Static screenshots show the final state, not animation.
 
-| Image | Source revision | What it shows |
+| Image | Source revision | Behavior |
 | --- | --- | --- |
-| [Before](before.png) | `e58865992aa22a7766b8d62a19ff3654dbd31bfd` | Untouched upstream startup and input prompt. |
-| [After](after.png) | `aeaa1f281ab4867cb5933f44dbc054ed0dc4c1b3` | New welcome after the icon finishes its two laps. |
-| [Live response](after-response.png) | `aeaa1f281ab4867cb5933f44dbc054ed0dc4c1b3` | A real model response followed by the next input prompt. |
+| [Before](before.png) | `e58865992aa22a7766b8d62a19ff3654dbd31bfd` | Untouched upstream startup. |
+| [After](after.png) | `0fa1e402c085256c9e401ca9b80b3979ffbd62b7` | One welcome before provider configuration, then model line and prompt. |
+| [Live response](after-response.png) | `0fa1e402c085256c9e401ca9b80b3979ffbd62b7` | Actual model response and next prompt. |
+| [Missing credentials](first-run.png) | `0fa1e402c085256c9e401ca9b80b3979ffbd62b7` | Same welcome, followed by existing setup guidance. |
 
-## Reproduce the live check
+The configured before/after captures use the same dark profile, font, window
+size, provider, model, and clean working directory. Native capture region:
+`100,132,860,467`, producing 1720 by 934 pixels on the Retina display. The missing
+credentials capture uses a taller window and `100,132,860,647` to include the
+existing instructions and shell exit messages. Those shell messages are not
+part of the welcome.
 
-Use an authenticated provider and a separate checkout for each revision.
-Both checks used the same virtual environment and `PYTHONPATH` pointed to the
-respective checkout. The working directory was `/tmp/sagent-welcome-demo`
-(displayed as `/private/tmp/sagent-welcome-demo` on macOS).
+## Reproduce
+
+Use separate checkouts for the recorded revisions and point `PYTHONPATH` to the
+checkout being tested. Both used the same virtual environment, with the working
+directory `/tmp/sagent-welcome-demo` (shown as `/private/tmp/...` on macOS).
 
 ```bash
 python -m sagent.bin.cli \
@@ -27,42 +32,35 @@ python -m sagent.bin.cli \
   --history /tmp/sagent-welcome-review-history
 ```
 
-After startup, enter:
+Enter `Reply with exactly: Ready for research.`, then `/help`, then `/quit`.
+Both upstream and the feature branch returned the expected reply, displayed
+help, and exited. Tools were disabled. No research experiments ran.
 
-```text
-Reply with exactly: Ready for research.
-/help
-/quit
-```
-
-Both revisions returned `Ready for research.`, displayed the command list, and
-exited after `/quit`. Tools were disabled. No research experiments were run.
-Startup itself makes no model request; the typed prompt does.
-
-The native captures used the same screen region, `100,132,860,467`, producing
-1720 by 934 pixel images on the Retina display. Capture command:
-
-```bash
-screencapture -x -R100,132,860,467 after.png
-```
+For the missing-credentials capture, use `env -u ANTHROPIC_API_KEY` with the
+same command, replacing the provider with `Anthropic` and omitting `--model`.
+No fake keys are needed. The process exits with status 1 as before. This tests
+an explicit unconfigured provider, not a new operating-system account.
 
 ## Validation
 
-- Focused welcome, CLI, and REPL tests: **253 passed, 1 deselected**.
-- Five actual CLI PTY cases: animated 80 by 24, compact 40 by 24, short 80 by
-  18, `NO_COLOR=1`, and `SAGENT_NO_ANIMATION=1`. All exited with status 0 after
-  `/quit`, without making a model request.
-- Whole-repository Ruff lint/format, ty, basedpyright, import, and build passed.
-- Full branch suite: **7393 passed, 13 failed, 132 skipped, 121 deselected**.
-- Untouched upstream suite: **7343 passed, 17 failed, 132 skipped,
-  121 deselected**. All 13 branch failures also occurred upstream. They are in
-  `sagent/lib/files/grep_test.py` and `sagent/lib/worker_count_test.py`, which this
-  change does not modify. The full suite is not green on this host.
-- Whole-repository codespell reports the existing `crate` finding at
-  `pyproject.toml:73`. The changed files pass codespell.
+- Focused welcome, CLI, and REPL suite: **265 passed, 1 deselected**.
+- Five real CLI PTY cases: animated 80x24, compact 40x24, short 80x18, no color,
+  and animation disabled. All exited with status 0 after `/quit` only.
+- Missing-credential routing tests cover default selection, Anthropic, OpenAI,
+  Google, and AnthropicCLI, in interactive and piped modes. These tests stub
+  credential construction; they do not authenticate with those services.
+- Fresh and resumed session tests verify one welcome before provider creation.
+- Ruff lint/format, ty, basedpyright, import, build, and changed-file codespell
+  passed. Required checks ran manually; commits skipped Git hooks.
+- Full branch suite: **7405 passed, 13 failed, 132 skipped, 121 deselected**.
+  Untouched upstream: **7343 passed, 17 failed, 132 skipped, 121 deselected**.
+  All branch failures also occurred upstream, in unchanged grep and worker-count
+  tests. The full suite is not green on this host.
+- Whole-repository codespell has the existing `crate` finding in
+  `pyproject.toml:73`.
 
-The test environment was macOS arm64 with Python 3.14.6. Checks used
-`DEVELOPER_DIR=/Library/Developer/CommandLineTools` on this host. This evidence
-does not establish visual compatibility with every terminal or font. Automated
-tests cover narrow layouts, resumed sessions, non-Unicode terminals, redirected
-output, color opt-out, and cursor cleanup during interruption.
+Environment: macOS arm64, Python 3.14.6, with
+`DEVELOPER_DIR=/Library/Developer/CommandLineTools`. Native visual evidence is
+for this Terminal profile. It does not establish compatibility with every font
+or live authentication with every provider. The welcome itself makes no model
+request and does not assert that credentials are valid remotely.

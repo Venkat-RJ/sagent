@@ -1,0 +1,52 @@
+{
+  "baseline_sha": "accc0d5837bf6d438d934c321896632687d179bd",
+  "patched_sha": "2b5ecf9ac240a8ddf8de35691bbd9248f0a8b2ba",
+  "before": {
+    "provider": "OpenAISubscription",
+    "model": "sol-6.1",
+    "effort": "medium",
+    "prompt": "How many four-digit numbers have distinct digits and are divisible by 5? Leading zeros are forbidden. Check separately the cases ending in 0 and in 5, then explain the answer briefly.",
+    "summary_characters": 354,
+    "answer_correct": true,
+    "expected_answer": 952,
+    "screenshot_sha256": "337437923a172bdd5ee1ba6b144776e4d43e8dcdf00909f95b0974c430e68ab0",
+    "live_provider": true,
+    "tools_enabled": false,
+    "history_heading_count": 83,
+    "visible_heading_count": 14,
+    "complete_summary_matches_terminal_history_ignoring_wrapping_whitespace": true
+  },
+  "after": {
+    "provider": "OpenAISubscription",
+    "model": "sol-6.1",
+    "effort": "medium",
+    "prompt": "How many four-digit numbers have distinct digits and are divisible by 5? Leading zeros are forbidden. Check separately the cases ending in 0 and in 5, then explain the answer briefly.",
+    "summary_characters": 381,
+    "answer_correct": true,
+    "expected_answer": 952,
+    "screenshot_sha256": "695e1d89191c45b13473b4f0dda0410904a5adc08163711ef3f689857de08661",
+    "live_provider": true,
+    "tools_enabled": false,
+    "thinking_headings": 1,
+    "complete_summary_matches_terminal_ignoring_wrapping_whitespace": true
+  },
+  "independent_live_calls": true,
+  "images_edited": false,
+  "same_default_suite_failure_ids": [
+    "sagent/lib/files/grep_test.py::test_a_named_binary_file_matches_text_that_looks_like_a_marker[rg]",
+    "sagent/lib/files/grep_test.py::test_a_nul_is_no_line_break_and_matches_only_a_dot[rg]",
+    "sagent/lib/worker_count_test.py::test_available_memory_is_whole_mebibytes",
+    "sagent/lib/worker_count_test.py::test_cores_without_frequencies_are_all_performance_cores",
+    "sagent/lib/worker_count_test.py::test_default_workers_are_capped_by_available_memory",
+    "sagent/lib/worker_count_test.py::test_default_workers_leave_a_performance_core_free",
+    "sagent/lib/worker_count_test.py::test_default_workers_take_three_eighths_of_the_physical_cores[12-5]",
+    "sagent/lib/worker_count_test.py::test_default_workers_take_three_eighths_of_the_physical_cores[16-6]",
+    "sagent/lib/worker_count_test.py::test_default_workers_take_three_eighths_of_the_physical_cores[2-2]",
+    "sagent/lib/worker_count_test.py::test_default_workers_take_three_eighths_of_the_physical_cores[24-9]",
+    "sagent/lib/worker_count_test.py::test_default_workers_take_three_eighths_of_the_physical_cores[32-12]",
+    "sagent/lib/worker_count_test.py::test_default_workers_take_three_eighths_of_the_physical_cores[4-2]",
+    "sagent/lib/worker_count_test.py::test_default_workers_take_three_eighths_of_the_physical_cores[8-3]",
+    "sagent/lib/worker_count_test.py::test_macos_cores_come_from_sysctl_skipping_efficiency_cores",
+    "sagent/lib/worker_count_test.py::test_without_sysctl_or_sysfs_the_cpu_count_stands_in"
+  ]
+}

@@ -148,7 +148,7 @@ def render_welcome(
     console.print(Text("  /help commands   /tasks agents   /quit exit", style="dim"))
     console.print()
     if not resumed:
-        console.print(Text("  What would you like to investigate?"))
+        console.print(Text("  Hello, scientist! What are we doing today?"))
     console.print()
 
 

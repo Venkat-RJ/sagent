@@ -55,7 +55,7 @@ def test_fresh_terminal_has_banner_actual_metadata_and_invitation() -> None:
     assert "test-model" in out
     assert "TestProvider" in out
     assert "/research" in out
-    assert "What would you like to investigate?" in out
+    assert "Hello, scientist! What are we doing today?" in out
     assert "/help" in out
     assert "/quit" in out
     assert "/tasks" in out
@@ -74,7 +74,7 @@ def test_resume_keeps_transcript_prominent() -> None:
     assert "SAGENT" in out
     assert "Resuming your session." in out
     assert "█" not in out
-    assert "What would you like to investigate?" not in out
+    assert "Hello, scientist! What are we doing today?" not in out
 
 
 def test_redirected_output_retains_only_plain_model_line() -> None:
@@ -202,7 +202,7 @@ def test_sweep_finishes_before_metadata_and_restores_cursor(
     assert "\x1b[?25l" in out
     assert out.index("\x1b[?25h") < out.index("test-model")
     assert out.count("test-model") == 1
-    assert "What would you like to investigate?" in out
+    assert "Hello, scientist! What are we doing today?" in out
 
 
 @pytest.mark.parametrize(

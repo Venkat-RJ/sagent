@@ -345,9 +345,9 @@ def test_icon_is_left_of_wordmark_without_extra_brand_text() -> None:
     plain = console.export_text(styles=False)
     assert "rekursiv.ai" not in plain
     first = next(line for line in plain.splitlines() if "███████╗" in line)
-    assert first.index("┏") < first.index("███████╗")
+    assert first.index("╔") < first.index("███████╗")
     assert "▼" in plain
-    assert "██████    ┃" in plain
+    assert "██████    ║" in plain
 
 
 def test_loop_frames_leave_wordmark_and_bars_unchanged() -> None:
@@ -400,7 +400,7 @@ def test_startup_completes_two_loop_laps(monkeypatch: pytest.MonkeyPatch) -> Non
         folder=Path("/research"),
         animate=True,
     )
-    expected = list(range(0, len(welcome._LOOP), 3))
+    expected = list(range(len(welcome._LOOP)))
     assert phases == expected + expected
     assert (
         welcome._LOOP[-1] in welcome._LOOP[max(0, expected[-1] - 3) : expected[-1] + 1]
@@ -410,6 +410,7 @@ def test_startup_completes_two_loop_laps(monkeypatch: pytest.MonkeyPatch) -> Non
 @pytest.mark.parametrize("phase", [None, 0, 9, 24])
 def test_identity_keeps_a_rectangular_cell_grid(phase: int | None) -> None:
     rows = welcome._banner_rows(phase)
+    assert len(rows) == len(welcome._BANNER)
     assert all(row.cell_len == welcome._IDENTITY_WIDTH for row in rows)
     wordmark_start = welcome._ICON_WIDTH + welcome._ICON_GAP
     for row_index, row in enumerate(rows):
@@ -435,3 +436,42 @@ def test_frame_has_equal_top_and_bottom_breathing_room() -> None:
     top = next(i for i, line in enumerate(lines) if line.startswith("╭"))
     bottom = next(i for i, line in enumerate(lines) if line.startswith("╰"))
     assert lines[top + 1] == lines[bottom - 1] == "│" + " " * 78 + "│"
+
+
+@pytest.mark.parametrize("width", [16, 24, 40, 80])
+def test_command_descriptions_stay_with_their_command(width: int) -> None:
+    stream = io.StringIO()
+    console = Console(
+        file=stream, force_terminal=True, record=True, width=width, height=24
+    )
+    render_welcome(
+        console, model="test-model", provider="TestProvider", folder=Path("/research")
+    )
+    plain = console.export_text(styles=False)
+    lines = plain.splitlines()
+    for command, description in [
+        ("/help", "commands"),
+        ("/tasks", "agents"),
+        ("/quit", "exit"),
+    ]:
+        matching = [line for line in lines if command in line]
+        assert len(matching) == 1
+        if width >= 24:
+            assert command + " " + description in matching[0]
+    assert all(cell_len(line) <= width for line in lines)
+
+
+def test_wrapped_greeting_keeps_the_content_left_edge() -> None:
+    stream = io.StringIO()
+    console = Console(
+        file=stream, force_terminal=True, record=True, width=40, height=24
+    )
+    render_welcome(
+        console, model="test-model", provider="TestProvider", folder=Path("/research")
+    )
+    lines = console.export_text(styles=False).splitlines()
+    greeting_start = next(
+        i for i, line in enumerate(lines) if "Hello, scientist!" in line
+    )
+    assert lines[greeting_start].startswith("   ")
+    assert lines[greeting_start + 1] == "   today?"

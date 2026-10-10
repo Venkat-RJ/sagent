@@ -32,9 +32,12 @@ Resumed sessions use the compact heading before replaying the saved transcript.
 Welcome layout follows a terminal-cell grid:
 
 - The icon and wordmark form one rectangular block, separated by three cells.
-- The taller icon sets the block height; the wordmark starts on the same top row.
-- The frame has one empty row above and below its content, with one cell of
-  horizontal padding. Metadata and command hints share the same left edge.
+- The icon and wordmark have the same height and share their top and bottom edges.
+- The frame has one empty row above and below its content, with two cells of
+  horizontal padding on each side. Metadata and command hints share the same left edge.
+- Commands use a stronger text weight than their descriptions. Each command
+  stays with its description when wrapping; very narrow terminals show only
+  the command names.
 - The greeting stays outside the frame and aligns with that content edge.
 - Animation changes icon color only. Character positions, wordmark lettering,
   and the three colored bars stay fixed during both laps.

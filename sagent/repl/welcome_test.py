@@ -176,7 +176,7 @@ def test_literal_metadata_is_not_parsed_as_markup() -> None:
     assert "[bold]" in out
 
 
-def test_sweep_finishes_before_metadata_and_restores_cursor(
+def test_loop_finishes_before_metadata_and_restores_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     delays: list[float] = []
@@ -258,7 +258,7 @@ def test_environment_can_disable_startup_animation(
     assert calls == [True]
 
 
-def test_interrupted_sweep_restores_terminal_cursor(
+def test_interrupted_loop_restores_terminal_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def interrupt(_seconds: float) -> None:
@@ -285,7 +285,7 @@ def test_interrupted_sweep_restores_terminal_cursor(
 
 
 @pytest.mark.parametrize("width", [16, 40, 56, 80, 120])
-def test_terminal_width_border_contains_identity_commands_and_greeting(
+def test_terminal_width_border_contains_identity_commands_with_greeting_outside(
     width: int,
 ) -> None:
     stream = io.StringIO()
@@ -304,7 +304,8 @@ def test_terminal_width_border_contains_identity_commands_and_greeting(
     assert all(line.startswith("│ ") and line.endswith(" │") for line in frame[1:-1])
     assert "project" in "\n".join(frame)
     assert "/help" in "\n".join(frame)
-    assert "scientist!" in "\n".join(frame)
+    assert "scientist!" not in "\n".join(frame)
+    assert "scientist!" in "\n".join(lines[bottom + 1 :])
     assert all(cell_len(line) <= width for line in lines)
 
 
@@ -326,3 +327,40 @@ def test_ascii_border_preserves_encoding() -> None:
     plain = raw.getvalue().decode("ascii")
     assert "+---" in plain
     assert "project" in plain
+
+
+def test_icon_is_left_of_wordmark_without_extra_brand_text() -> None:
+    stream = io.StringIO()
+    console = Console(
+        file=stream, force_terminal=True, record=True, width=80, height=24
+    )
+    render_welcome(
+        console, model="test-model", provider="TestProvider", folder=Path("/research")
+    )
+    plain = console.export_text(styles=False)
+    assert "rekursiv.ai" not in plain
+    first = next(line for line in plain.splitlines() if "███████╗" in line)
+    assert first.index("╭") < first.index("███████╗")
+    assert "▼" in plain
+    assert "━━━━━━" in plain
+
+
+def test_loop_frames_leave_wordmark_and_bars_unchanged() -> None:
+    still = welcome._banner_rows()
+    for phase in range(0, len(welcome._LOOP), 3):
+        animated = welcome._banner_rows(phase)
+        assert [row.plain for row in animated] == [row.plain for row in still]
+        for static_row, animated_row in zip(still, animated, strict=True):
+            start = welcome._ICON_WIDTH + 3
+            assert static_row[start:].spans == animated_row[start:].spans
+        assert animated != still
+
+
+@pytest.mark.parametrize("width", [56, 68])
+def test_icon_and_wordmark_use_compact_layout_when_the_pair_would_wrap(
+    width: int,
+) -> None:
+    out = _render(width=width)
+    assert "SAGENT" in out
+    assert "█" not in out
+    assert "rekursiv.ai" not in out

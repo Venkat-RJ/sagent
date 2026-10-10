@@ -37,6 +37,26 @@ _BANNER = (
 )
 _BANNER_WIDTH = max(len(row) for row in _BANNER)
 _OUTLINE = frozenset("╔╗╚╝═║")
+# Terminal adaptation of the supplied document-loop icon, with its three bars.
+_ICON = (
+    "  ╭───────╮",
+    "  ▼       │",
+    "━━━━━━    │",
+    "━━━━━     │",
+    "━━━━━━━   │",
+    "  ╷       │",
+    "  ╰───────╯",
+)
+_ICON_WIDTH = max(len(row) for row in _ICON)
+_IDENTITY_WIDTH = _ICON_WIDTH + 3 + _BANNER_WIDTH
+# Follow the open stroke from bottom left, around the page, to the arrow.
+_LOOP = (
+    (5, 2),
+    *((6, column) for column in range(2, 11)),
+    *((row, 10) for row in range(5, -1, -1)),
+    *((0, column) for column in range(9, 1, -1)),
+    (1, 2),
+)
 
 
 def print_welcome(
@@ -81,7 +101,7 @@ def render_welcome(
         not resumed
         and not console.is_dumb_terminal
         and unicode_ok
-        and console.width >= _BANNER_WIDTH + 4
+        and console.width >= _IDENTITY_WIDTH + 4
         and console.height >= 22
     )
     framed = not console.is_dumb_terminal and console.width >= 16
@@ -103,7 +123,7 @@ def render_welcome(
     if large:
         if animate and not console.no_color and console.color_system is not None:
             # Finish before prompt-toolkit takes ownership. Manual refresh keeps
-            # this single sweep bounded and leaves no background refresh thread.
+            # this single loop bounded and leaves no background refresh thread.
             with Live(
                 Group(*framed_rows(_banner_rows())),
                 console=console,
@@ -111,20 +131,14 @@ def render_welcome(
                 redirect_stdout=False,
                 redirect_stderr=False,
             ) as live:
-                for column in range(-6, _BANNER_WIDTH + 6, 6):
-                    live.update(Group(*framed_rows(_banner_rows(column))), refresh=True)
-                    time.sleep(0.025)
+                for phase in range(0, len(_LOOP), 3):
+                    live.update(Group(*framed_rows(_banner_rows(phase))), refresh=True)
+                    time.sleep(0.035)
                 live.update(Group(*framed_rows(_banner_rows())), refresh=True)
         else:
             print_rows(_banner_rows())
-        motif = Text()
-        for color in (_BLUE, _GREEN, _RED):
-            motif.append("━━ ", style=color)
-        motif.append(" rekursiv.ai", style="dim")
-        print_rows([motif])
     else:
         heading = Text("SAGENT", style=f"bold {_BLUE}")
-        heading.append("  rekursiv.ai", style="dim")
         print_rows([heading])
     if resumed:
         print_rows([Text("Resuming your session.")])
@@ -154,24 +168,35 @@ def render_welcome(
         print_rows([row])
     print_rows([Text()])
     print_rows([Text("/help commands   /tasks agents   /quit exit", style="dim")])
-    if not resumed:
-        print_rows([Text()])
-        print_rows([Text("Hello, scientist! What are we doing today?")])
     if framed:
         left, horizontal, right = ("╰", "─", "╯") if unicode_ok else ("+", "-", "+")
         console.print(Text(left + horizontal * (frame_width - 2) + right, style="dim"))
     console.print()
+    if not resumed:
+        console.print(Text("  Hello, scientist! What are we doing today?"))
+        console.print()
 
 
-def _banner_rows(highlight: int | None = None) -> list[Text]:
+def _banner_rows(phase: int | None = None) -> list[Text]:
+    """Keep the wordmark steady while one highlight follows the icon loop."""
+    active: set[tuple[int, int]] = (
+        set() if phase is None else set(_LOOP[max(0, phase - 3) : phase + 1])
+    )
     rows: list[Text] = []
-    for row in _BANNER:
+    for row_index, icon in enumerate(_ICON):
         lettering = Text()
-        for column, char in enumerate(row):
-            style = f"dim {_BLUE}" if char in _OUTLINE else _BLUE
-            if char == "█" and highlight is not None and abs(column - highlight) < 5:
-                style = "#b3dbf4"
+        for column, char in enumerate(icon.ljust(_ICON_WIDTH)):
+            style = "dim"
+            if char == "━":
+                style = (_BLUE, _GREEN, _RED)[row_index - 2]
+            elif (row_index, column) in active:
+                style = _BLUE
             lettering.append(char, style=style)
+        lettering.append("   ")
+        if row_index < len(_BANNER):
+            for char in _BANNER[row_index]:
+                style = f"dim {_BLUE}" if char in _OUTLINE else _BLUE
+                lettering.append(char, style=style)
         rows.append(lettering)
     return rows
 
@@ -204,7 +229,7 @@ def _frame_rows(
 
 def _supports_blocks(encoding: str) -> bool:
     try:
-        _ = "█╔╗╚╝═║━…╭╮╰╯─│".encode(encoding)
+        _ = "█╔╗╚╝═║━…╭╮╰╯─│▼╷".encode(encoding)
     except (LookupError, UnicodeEncodeError):
         return False
     return True

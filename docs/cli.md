@@ -22,6 +22,9 @@ show an ellipsis for omitted ancestors while keeping the project suffix.
 It waits for your input
 without making a model request for the welcome screen. The terminal background
 and body text follow your terminal settings; `NO_COLOR=1` disables color.
+Fresh color terminals show one brief blue sweep across the wordmark before the
+input prompt. Set `SAGENT_NO_ANIMATION=1` to keep startup static. Resumed sessions,
+compact layouts, redirected output, and `NO_COLOR` output remain static.
 Narrow, short, dumb, or non-Unicode terminals get a compact SAGENT heading.
 Resumed sessions use the compact heading before replaying the saved transcript.
 Piped input does not show a welcome screen. Redirected stderr keeps the plain

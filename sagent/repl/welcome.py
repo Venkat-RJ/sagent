@@ -5,14 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import os
+import time
+
 
 if TYPE_CHECKING:
-    from rich.console import Console
+    from rich.console import Console, Group
+    from rich.live import Live
     from rich.text import Text
 else:
     from wrapt import lazy_import
 
     Console = lazy_import("rich.console", "Console")
+    Group = lazy_import("rich.console", "Group")
+    Live = lazy_import("rich.live", "Live")
     Text = lazy_import("rich.text", "Text")
 
 
@@ -47,6 +53,7 @@ def print_welcome(
         provider=provider,
         folder=folder,
         resumed=resumed,
+        animate=not bool(os.environ.get("SAGENT_NO_ANIMATION")),
     )
 
 
@@ -57,6 +64,7 @@ def render_welcome(
     provider: str,
     folder: Path,
     resumed: bool = False,
+    animate: bool = False,
 ) -> None:
     """Render a width-aware welcome without performing any model request.
 
@@ -78,13 +86,23 @@ def render_welcome(
     )
     console.print()
     if large:
-        for row in _BANNER:
-            lettering = Text("  ")
-            for char in row:
-                lettering.append(
-                    char, style=f"dim {_BLUE}" if char in _OUTLINE else _BLUE
-                )
-            console.print(lettering)
+        if animate and not console.no_color and console.color_system is not None:
+            # Finish before prompt-toolkit takes ownership. Manual refresh keeps
+            # this single sweep bounded and leaves no background refresh thread.
+            with Live(
+                Group(*_banner_rows()),
+                console=console,
+                auto_refresh=False,
+                redirect_stdout=False,
+                redirect_stderr=False,
+            ) as live:
+                for column in range(-6, _BANNER_WIDTH + 6, 6):
+                    live.update(Group(*_banner_rows(column)), refresh=True)
+                    time.sleep(0.025)
+                live.update(Group(*_banner_rows()), refresh=True)
+        else:
+            for lettering in _banner_rows():
+                console.print(lettering)
         motif = Text("  ")
         for color in (_BLUE, _GREEN, _RED):
             motif.append("━━ ", style=color)
@@ -132,6 +150,19 @@ def render_welcome(
     if not resumed:
         console.print(Text("  What would you like to investigate?"))
     console.print()
+
+
+def _banner_rows(highlight: int | None = None) -> list[Text]:
+    rows: list[Text] = []
+    for row in _BANNER:
+        lettering = Text("  ")
+        for column, char in enumerate(row):
+            style = f"dim {_BLUE}" if char in _OUTLINE else _BLUE
+            if char == "█" and highlight is not None and abs(column - highlight) < 5:
+                style = "#b3dbf4"
+            lettering.append(char, style=style)
+        rows.append(lettering)
+    return rows
 
 
 def _supports_blocks(encoding: str) -> bool:

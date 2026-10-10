@@ -11,6 +11,7 @@ from rich.console import Console
 
 import pytest
 
+from sagent.repl import welcome
 from sagent.repl.welcome import render_welcome
 
 
@@ -174,3 +175,111 @@ def test_long_directory_name_and_wide_characters_fit_metadata() -> None:
 def test_literal_metadata_is_not_parsed_as_markup() -> None:
     out = _render(folder=Path("/research/[bold]"))
     assert "[bold]" in out
+
+
+def test_sweep_finishes_before_metadata_and_restores_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delays: list[float] = []
+    monkeypatch.setattr("sagent.repl.welcome.time.sleep", delays.append)
+    stream = io.StringIO()
+    render_welcome(
+        Console(
+            file=stream,
+            force_terminal=True,
+            color_system="truecolor",
+            no_color=False,
+            width=80,
+            height=24,
+        ),
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
+        animate=True,
+    )
+    out = stream.getvalue()
+    assert 0 < sum(delays) < 0.5
+    assert "\x1b[?25l" in out
+    assert out.index("\x1b[?25h") < out.index("test-model")
+    assert out.count("test-model") == 1
+    assert "What would you like to investigate?" in out
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "terminal", "no_color", "resumed"),
+    [
+        (40, 24, True, False, False),
+        (80, 18, True, False, False),
+        (80, 24, False, False, False),
+        (80, 24, True, True, False),
+        (80, 24, True, False, True),
+    ],
+)
+def test_fallbacks_do_not_animate(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    width: int,
+    height: int,
+    terminal: bool,
+    no_color: bool,
+    resumed: bool,
+) -> None:
+    delays: list[float] = []
+    monkeypatch.setattr("sagent.repl.welcome.time.sleep", delays.append)
+    render_welcome(
+        Console(
+            file=io.StringIO(),
+            force_terminal=terminal,
+            no_color=no_color,
+            width=width,
+            height=height,
+        ),
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
+        animate=True,
+        resumed=resumed,
+    )
+    assert not delays
+
+
+def test_environment_can_disable_startup_animation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SAGENT_NO_ANIMATION", "1")
+    calls: list[bool] = []
+
+    def capture(*_args: object, **kwargs: object) -> None:
+        calls.append(kwargs["animate"] is False)
+
+    monkeypatch.setattr(welcome, "render_welcome", capture)
+    welcome.print_welcome(
+        model="test-model", provider="TestProvider", folder=Path("/research")
+    )
+    assert calls == [True]
+
+
+def test_interrupted_sweep_restores_terminal_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("sagent.repl.welcome.time.sleep", interrupt)
+    stream = io.StringIO()
+    with pytest.raises(KeyboardInterrupt):
+        render_welcome(
+            Console(
+                file=stream,
+                force_terminal=True,
+                color_system="truecolor",
+                no_color=False,
+                width=80,
+                height=24,
+            ),
+            model="test-model",
+            provider="TestProvider",
+            folder=Path("/research"),
+            animate=True,
+        )
+    assert "\x1b[?25h" in stream.getvalue()

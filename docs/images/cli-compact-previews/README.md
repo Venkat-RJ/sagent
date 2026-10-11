@@ -1,17 +1,74 @@
 # Compact command and diff previews
 
-These images were refreshed on 2026-10-11 from two live Sagent CLI sessions using
-OpenAISubscription and `sol-6.1`. Both sessions used the same fictional
-fixture and a 100-column, 40-row pseudo-terminal.
+This folder has two kinds of images.
 
-The images are rendered PTY captures, not native macOS Terminal screenshots.
+- `native/` holds native macOS Terminal.app window captures from 2026-10-11.
+  Each image is the window as macOS drew it, taken with `screencapture -l`.
+- The PNGs at the top level are rendered terminal output from earlier the same day.
+  They were drawn from captured terminal cells with Pillow, not taken from a window.
+
+## Native Terminal.app captures
+
+Both runs used live Sagent CLI sessions with OpenAISubscription and `sol-6.1`,
+the fixture below, and a 100 by 40 Terminal.app window with the default profile.
+Before is untouched upstream `f4db9bf079159df5ad8eedd704101ff256a99216`.
+After is PR runtime revision `8afe18abde0be9622b8444ee31bee0a4f64b67c1`.
+
+| Long command before | Compact command after |
+| --- | --- |
+| ![Long command before](native/before-command.png) | ![Compact command after](native/after-command.png) |
+
+| Completed edit before | Completed edit after |
+| --- | --- |
+| ![Full diff fills the window](native/before-diff.png) | ![Compact diff keeps the command visible](native/after-diff.png) |
+
+On the after revision, the same session then checked inspection:
+
+1. Typed `draft intact`, then pressed Ctrl+O. The latest diff opened collapsed.
+   [Image](native/after-details-collapsed.png)
+2. Clicked the diff header. The full diff expanded from its first line.
+   [Image](native/after-details-expanded.png)
+3. Searched for `after line 79`, which sits in the omitted tail.
+   [Image](native/after-details-search.png)
+4. Closed the view. The typed draft was still in the input.
+   [Image](native/after-draft-restored.png)
+5. Ran `/details 1`. The complete Bash command opened.
+   [Image](native/after-details-command.webp)
+
+Both runs executed the same Bash command once and changed all 80 fixture lines
+through Edit with identical arguments. Inspection left the saved session and the
+Bash run counter unchanged. Both CLI processes exited with status 0.
+
+How the native images were made:
+
+- Each run opened its own Terminal.app window and started the CLI there.
+- A small PTY relay in that window passed the CLI's output to Terminal unchanged
+  and let the test driver type keys. Terminal answered cursor and size queries itself.
+- `native/manifest.json` records revisions, arguments, the terminal environment and
+  image hashes. Each image has a `.screen.txt` and `.ansi.gz` record of the same moment.
+- `after-details-command` is lossless WebP and `before-command` is a lossless PNG re-save,
+  to stay under the repository's 800 KB file limit. Their pixels match the captures.
+
+Limits:
+
+- Keys and the mouse click were written to the CLI's input by the driver.
+  No physical keyboard or mouse event was generated.
+- Faint underscores at column 2 in some images are Terminal redraw marks where the
+  cursor had been. The saved output shows blank cells there, and an upstream run captured
+  the same way showed the same marks. A full redraw, such as closing the details view,
+  clears them.
+- Live provider coverage is OpenAISubscription on macOS only.
+
+## Rendered terminal output (earlier)
+
+The images in this section are rendered PTY captures, not native window captures.
 The capture harness read the CLI's actual ANSI output with `pexpect`, decoded
 it with `pyte`, and rendered the resulting cell grid with Pillow. Both runs
 use the same font, palette, cell size and viewport. No tool output was pasted
 into the images. The harness answered cursor-position requests and enabled
 color for both runs. Menlo and Apple Symbols provide the glyphs.
 
-## Before and after
+### Before and after
 
 | Long command before | Compact command after |
 | --- | --- |
@@ -39,7 +96,7 @@ The live check then searched for `after line 79`, closed the view, and verified
 that the typed draft survived, the command counter stayed at one, and the
 persisted session file was unchanged.
 
-## Revisions and checks
+### Revisions and checks
 
 - Before: untouched upstream `f4db9bf079159df5ad8eedd704101ff256a99216`.
 - After: PR runtime revision `8afe18abde0be9622b8444ee31bee0a4f64b67c1`.
@@ -60,7 +117,7 @@ The manifest records the test command, source revisions and asset hashes.
 
 The mouse check sends the terminal's mouse protocol through a real PTY.
 It does not establish that a physical click works in every terminal app.
-Direct access to macOS Terminal was unavailable to the computer-use tool.
+The native captures above use a real Terminal.app window, but still not a physical click.
 The normal transcript remains ordinary scrollback; mouse expansion is inside
 `/details` only. Clipboard behavior was checked with a controlled subprocess,
 not the user's clipboard. Linux and Windows were not tested live.

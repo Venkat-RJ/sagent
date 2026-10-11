@@ -75,11 +75,15 @@ def format_pending(agent: Agent) -> str:
         return "No checkpoint reported. Agent idleness does not establish assignment completion."
     blocks: list[str] = []
     for entry in entries:
-        when = (
-            datetime.fromtimestamp(entry.observed_at, UTC).isoformat()
-            if entry.observed_at > 0
-            else "unknown time"
-        )
+        try:
+            when = (
+                datetime.fromtimestamp(entry.observed_at, UTC).isoformat()
+                if entry.observed_at > 0
+                else "unknown time"
+            )
+        except (OverflowError, OSError, ValueError):
+            # A malformed saved timestamp must not strand a resumed session.
+            when = "unknown time"
         heading = f"{entry.label} | reported {when}"
         if entry.restored:
             heading += (

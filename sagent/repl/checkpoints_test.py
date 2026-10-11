@@ -307,3 +307,26 @@ def test_old_and_malformed_metadata_do_not_create_pending_work() -> None:
         ).checkpoint
         is None
     )
+
+
+@pytest.mark.parametrize("timestamp", [float("inf"), float("nan"), 1e300, -1.0])
+def test_invalid_saved_report_time_does_not_break_resume(
+    tmp_path: Path,
+    timestamp: float,
+) -> None:
+    agent = _agent(tmp_path)
+    agent.checkpoint = _checkpoint()
+    path = tmp_path / "session.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    for record in records:
+        if "checkpoint_updated_at" in record:
+            record["checkpoint_updated_at"] = timestamp
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    loaded = load_session(tmp_path)
+    assert loaded is not None
+    resumed = _agent(tmp_path)
+    resumed.resume(*loaded)
+    printer = RecordingPrinter()
+    replay_messages(resumed, printer)
+    assert "reported unknown time" in printer.slash_blocks[0]
+    assert "Pending: Official evaluator result" in format_pending(resumed)

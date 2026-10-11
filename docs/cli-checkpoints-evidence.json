@@ -12,7 +12,7 @@
     "agent/session_io.py": "bdb72911ae0ccc37bd31d96e3d0b7a2d13a9cf4108b5db5020b73b196b2b46bc",
     "tools/agent_self.py": "c5c365fb62016c808812e479d0dddda59579fac6964b77c6ae1076125ee42638",
     "tools/agent_spawn.py": "5440f196623ec7a5f91a9f463bed38c12aa46e21ecc1ebd875bc41a3c06d49e8",
-    "repl/checkpoints.py": "3239f2b04bfbc76ef0a9c33788b9d7880c4fadeba33084bf93125334b5ed7f98",
+    "repl/checkpoints.py": "0743d7f28eee65b9adde69ec6e3d26a527a890c9029ba0809164e27b1609a5ea",
     "repl/render.py": "0729fbb9b2287ddd851cc98bc73d07f69723aa5f98b0b50674e60959f897bfa4",
     "repl/run_repl.py": "1a67425bc5bed1e16b7ec73d9b727401ef691e4869c85bf83ebec5b9bbc717cb"
   },
@@ -45,11 +45,11 @@
     ]
   },
   "tests": {
-    "focused": "1153 passed",
+    "focused": "1157 passed",
     "pre_commit": "passed, including 942 selected tests",
     "global_ty": "passed",
     "global_basedpyright": "passed",
-    "default_suite": "15 failed, 7365 passed, 132 skipped, 121 deselected in 21.66s",
+    "default_suite_before_review_fix": "15 failed, 7365 passed, 132 skipped, 121 deselected in 21.66s",
     "upstream_default_suite": "15 failed, 7345 passed, 132 skipped, 121 deselected in 29.14s",
     "identical_failure_set": [
       "sagent/lib/files/grep_test.py::test_a_named_binary_file_matches_text_that_looks_like_a_marker[rg]",
@@ -68,6 +68,11 @@
       "sagent/lib/worker_count_test.py::test_macos_cores_come_from_sysctl_skipping_efficiency_cores",
       "sagent/lib/worker_count_test.py::test_without_sysctl_or_sysfs_the_cpu_count_stands_in"
     ]
+  },
+  "review": {
+    "fixed": "An out-of-range saved timestamp could crash resume or /pending; it now displays unknown time.",
+    "new_regression_cases": 4,
+    "before_after_captures": "docs/images/cli-checkpoints/capture.json"
   },
   "checkpoint_event_excerpt": [
     {
@@ -183,7 +188,7 @@
     "PTY capture, not a native macOS Terminal screenshot.",
     "Agents must adopt the checkpoint channel; existing prose is not filtered.",
     "Checkpoint content is an agent report, not an independently verified external-job lifecycle.",
-    "The full initial fixture preceded formatting and saved-label edits; the resumed real CLI matched all final source hashes.",
+    "The original two-worker fixture preceded the timestamp guard; the resumed CLI and new before/after runs match the reviewed source hashes.",
     "Thinking and individual partial-text payloads are omitted from event traces; final responses and raw PTY output are retained.",
     "Live provider coverage is OpenAISubscription only; no cross-platform UI claim."
   ]

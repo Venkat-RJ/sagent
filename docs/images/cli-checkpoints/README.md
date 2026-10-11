@@ -1,22 +1,84 @@
 # Live CLI comparison
 
+This folder has two kinds of images.
+
+- `native/` holds native macOS Terminal.app window captures from 2026-10-11.
+  Each image is the window as macOS drew it, taken with `screencapture -l`.
+- The PNGs at the top level are rendered terminal output from earlier the same day.
+  They were drawn from captured terminal cells with Pillow, not taken from a window.
+
+## Native Terminal.app captures
+
+Both runs used the same prompt, OpenAISubscription with `sol-6.1` at high effort,
+and a 100 by 34 Terminal.app window with the default profile. Each started a real
+local background command and waited for its result.
+Before is untouched upstream `f4db9bf079159df5ad8eedd704101ff256a99216`.
+After is PR runtime revision `6d88005a33489ae916488ff9848289f538561c07`.
+
+| | Before | After |
+| --- | --- | --- |
+| Waiting for the result | ![Upstream waiting reply](native/before-waiting.png) | ![Persistent pending report](native/after-waiting.png) |
+| User input needed | ![Upstream approval reply](native/before-action-needed.png) | ![Persistent request for user input](native/after-action-needed.png) |
+
+On the after revision:
+
+- `/pending` showed the full report, its sender and report time without a model call.
+  [Image](native/after-pending-details.png)
+- The resumed session marked the report as saved and not rechecked, below the input
+  and in `/pending`. [Saved status](native/resume-saved.png) and
+  [`/pending`](native/resume-pending.png)
+- Terminal.app was then resized to 40, 80 and 120 columns. The status stayed readable
+  and the saved session did not change.
+  [40](native/resume-width-40.png), [80](native/resume-width-80.png),
+  [120](native/resume-width-120.png)
+
+The after run saved two checkpoint changes. The first happened while the background
+command was still running. All CLI processes exited with status 0.
+
+How the native images were made:
+
+- Each run opened its own Terminal.app window and started the CLI there.
+- A small PTY relay in that window passed the CLI's output to Terminal unchanged
+  and let the test driver type keys. Terminal answered cursor and size queries itself.
+  Resizes came from Terminal, so the CLI received real window size changes.
+- `native/manifest.json` records revisions, arguments, the terminal environment and
+  image hashes. Each image has a `.screen.txt` and `.ansi.gz` record of the same moment.
+- `resume-saved` and `resume-pending` are lossless PNG re-saves, to stay under the
+  repository's 800 KB file limit. Their pixels match the captures.
+
+Limits:
+
+- Keys were written to the CLI's input by the driver. No physical keyboard event was generated.
+- Each resize leaves one blank `>` prompt line in Terminal.app scrollback.
+  Upstream does the same when resumed and resized the same way:
+  [upstream at 120 columns](native/baseline-width-120.png).
+- Faint underscores at column 2 in some images are Terminal redraw marks where the
+  cursor had been. The saved output shows blank cells there. They also appear upstream.
+- The prompt asks the agent to use the available reporting mechanism. This checks the
+  display, not whether agents adopt checkpoints on their own.
+- Live provider coverage is OpenAISubscription on macOS only.
+
+## Rendered terminal output (earlier)
+
 These images were refreshed on 2026-10-11. The before and after runs used the same prompt, provider, model settings and terminal size.
 
 Before is untouched upstream `f4db9bf079159df5ad8eedd704101ff256a99216`.
 After is PR runtime revision `6d88005a33489ae916488ff9848289f538561c07`.
 The manifest records both revisions and the actual source hashes.
 
-| Waiting for the result | |
-| --- | --- |
+### Waiting for the result
+
 | Before | After |
+| --- | --- |
 | ![Upstream waiting reply](before-waiting.png) | ![Persistent pending report](after-waiting.png) |
 
-| User input needed | |
-| --- | --- |
+### User input needed
+
 | Before | After |
+| --- | --- |
 | ![Upstream approval reply](before-action-needed.png) | ![Persistent approval handoff](after-action-needed.png) |
 
-These are PNG renderings of terminal cells captured from live PTYs. They are not native macOS Terminal screenshots. Computer Use rejected access to Terminal, so native screenshots remain unavailable.
+These are PNG renderings of terminal cells captured from live PTYs. They are not native window captures. The native Terminal.app captures are in the section above.
 
 The CLI made real OpenAISubscription requests using `sol-6.1`, high effort and hidden thinking. Each run used a fresh session, a 100-column by 34-row terminal, and only AgentSelf, Bash and BackgroundTask. Both runs exited with status 0.
 

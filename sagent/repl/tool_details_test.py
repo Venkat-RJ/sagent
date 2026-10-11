@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 
 import asyncio
 import io
@@ -202,6 +202,73 @@ def test_store_failure_shows_complete_command(monkeypatch: MonkeyPatch) -> None:
         )
         assert "disk full" in buffer.getvalue()
         assert buffer.getvalue().count("line\n") == 50
+
+
+@pytest.mark.parametrize("storage_fails", [False, True])
+def test_hidden_commands_are_neither_printed_nor_stored(
+    monkeypatch: MonkeyPatch,
+    *,
+    storage_fails: bool,
+) -> None:
+    with ToolDetails() as store:
+        if storage_fails:
+
+            def fail(*_args: object) -> None:
+                pytest.fail("Hidden commands must not reach detail storage")
+
+            monkeypatch.setattr(store, "add", fail)
+        output = io.StringIO()
+        printer = ConsolePrinter(Console(file=output), details=store)
+        printer.write_tool_label(
+            "Bash\nprivate command",
+            command=OutputSpec(show=False),
+        )
+        assert "Bash" in output.getvalue()
+        assert "private command" not in output.getvalue()
+        assert "/details" not in output.getvalue()
+        assert store.entries == []
+
+
+@pytest.mark.asyncio
+async def test_buffered_output_retains_terminal_styles(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class Terminal(io.StringIO):
+        @override
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.delenv("TTY_COMPATIBLE", raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    with ToolDetails() as store:
+        store.add("Bash", "command", "echo original")
+        output = Terminal()
+        printer = ConsolePrinter(Console(file=output, width=80), details=store)
+
+        def render() -> None:
+            printer.write_tool_error("failed command")
+            printer.write_child_block(
+                "worker",
+                [ToolResult(call_id="t", content="child failed", is_error=True)],
+            )
+
+        render()
+        expected = output.getvalue()
+        assert "\x1b[" in expected
+        _ = output.seek(0)
+        _ = output.truncate()
+
+        async def inspect(_store: ToolDetails, _number: int) -> None:
+            assert printer.console.is_terminal
+            render()
+            assert output.getvalue() == ""
+
+        monkeypatch.setattr("sagent.repl.console_pane.show_details", inspect)
+        await printer.inspect_details()
+        assert output.getvalue() == expected
+        assert printer.console.file is output
 
 
 def test_display_controls_are_visible_but_original_is_unchanged() -> None:

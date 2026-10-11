@@ -53,7 +53,8 @@ characters are displayed visibly in the inspector, while the raw files
 and complete-item copying retain the exact original text.
 
 If storage fails, the renderer reports the failure and prints the full
-payload. Non-interactive printers keep their existing rendering. When
+visible payload. Commands whose display is disabled are neither printed
+nor saved in the details store. Non-interactive printers keep their existing rendering. When
 inspection runs without a terminal, it prints the selected complete item.
 
 Default policy when output is on: first 2 lines, `⋯ N lines ⋯`, last 2

@@ -19,6 +19,7 @@ import sys
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from typing import IO
 
     from rich.cells import chop_cells
     from rich.console import Console
@@ -66,6 +67,35 @@ from sagent.types.runtime import (
     ToolResult,
     UserMessage,
 )
+
+
+class _PendingOutput:
+    """Buffer writes while retaining the real terminal's capabilities."""
+
+    def __init__(self, terminal: IO[str], pending: IO[str]) -> None:
+        self._terminal = terminal
+        self._pending = pending
+
+    @property
+    def encoding(self) -> str:
+        encoding = getattr(self._terminal, "encoding", None)
+        return encoding if isinstance(encoding, str) else "utf-8"
+
+    def isatty(self) -> bool:
+        return self._terminal.isatty()
+
+    def fileno(self) -> int:
+        return self._terminal.fileno()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        return self._pending.write(text)
+
+    def flush(self) -> None:
+        if not self._pending.closed:
+            self._pending.flush()
 
 
 class ConsolePrinter:
@@ -122,7 +152,6 @@ class ConsolePrinter:
         if not self.console.is_terminal or not sys.stdin.isatty():
             self.write_line(display_text(entry.read()))
             return
-        self._inspecting = True
         original_file = self.console.file
         # Rendering continues into a spool while the viewer owns the screen.
         # Agent tasks and persistence keep running; pending output is restored
@@ -132,7 +161,8 @@ class ConsolePrinter:
             encoding="utf-8",
             max_size=1_048_576,
         ) as pending:
-            self.console.file = pending
+            self._inspecting = True
+            self.console.file = cast("IO[str]", _PendingOutput(original_file, pending))
             try:
                 await show_details(self.details, number)
             finally:
@@ -259,6 +289,8 @@ class ConsolePrinter:
         if not rest:
             return
         spec = command or OutputSpec(show=True)
+        if not spec.show:
+            return
         entry = self._save_detail(header, "command", rest)
         width = max(1, self.console.width - len(_INPUT_GLYPH))
         rows = (

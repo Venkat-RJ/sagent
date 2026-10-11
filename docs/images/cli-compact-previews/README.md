@@ -1,6 +1,6 @@
 # Compact command and diff previews
 
-These images come from two live Sagent CLI sessions using
+These images were refreshed on 2026-10-11 from two live Sagent CLI sessions using
 OpenAISubscription and `sol-6.1`. Both sessions used the same fictional
 fixture and a 100-column, 40-row pseudo-terminal.
 
@@ -42,15 +42,21 @@ persisted session file was unchanged.
 ## Revisions and checks
 
 - Before: untouched upstream `f4db9bf079159df5ad8eedd704101ff256a99216`.
-- After: runtime code from `88214d1`, including the review fixes. The later
-  `1f460dd` commit strengthens a test without changing runtime code.
+- After: PR runtime revision `8afe18abde0be9622b8444ee31bee0a4f64b67c1`.
+- Fresh focused check: 244 tests passed across details, rendering, diffs,
+  slash commands, replay and keybindings. Earlier broader checks remain
+  documented in the PR.
 - `manifest.json` records source, fixture, command, edit and image hashes.
 - Both live runs executed Bash once and changed all 80 fixture lines through
   Edit. Their command and edit arguments were compared after completion.
-- A separate resumed live session checked help, numbered details, F2 mouse
+- An earlier separate resumed live session checked help, numbered details, F2 mouse
   handling, replay, and background work. Ctrl+C closed the inspector while
   Bash kept running. Tool and model completion persisted while the inspector
   stayed open, and buffered output appeared after closing it.
+
+Each image has a matching `.screen.txt` and compressed `.ansi.gz` capture.
+The ANSI bytes reproduce the saved text grid exactly when decoded with pyte.
+The manifest records the test command, source revisions and asset hashes.
 
 The mouse check sends the terminal's mouse protocol through a real PTY.
 It does not establish that a physical click works in every terminal app.

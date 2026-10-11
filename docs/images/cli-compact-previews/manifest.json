@@ -1,15 +1,15 @@
 {
-  "capture_date_utc": "2026-10-11T02:37:02.999066+00:00",
+  "capture_date": "2026-10-11",
   "method": "Live provider-backed CLI in a real PTY, ANSI decoded with pyte and rendered with Pillow/Menlo. No native Terminal app capture.",
   "provider": "OpenAISubscription",
   "model": "sol-6.1",
+  "effort": "low",
   "terminal": {
     "columns": 100,
     "rows": 40,
     "TERM": "xterm-256color",
     "COLORTERM": "truecolor",
-    "NO_COLOR": "unset",
-    "cursor_position_requests": "answered"
+    "NO_COLOR": "unset"
   },
   "raster": {
     "cell_width": 12,
@@ -27,7 +27,7 @@
     "Pillow": "12.3.0"
   },
   "before_commit": "f4db9bf079159df5ad8eedd704101ff256a99216",
-  "after_runtime_commit": "88214d1568cdfa07309854235e4e48c99569b8c4",
+  "after_runtime_commit": "8afe18abde0be9622b8444ee31bee0a4f64b67c1",
   "source_sha256": {
     "before": {
       "sagent/repl/console_pane.py": "d76299d7797db5565b2928e0d398a1dcbcbfa6240e155ab292b0ed52e1e19dee",
@@ -54,42 +54,89 @@
       "sagent/tools/display.py": "0cf894d0ef0346c2316b659476bbd26af29b915fe6148a925b92c4f4dae5de67"
     }
   },
-  "capture_script_sha256": "8125e522014da228bd1b7d0bc3703f44edd164364941123935e5bec23922410c",
+  "capture_script_sha256": "ce332b9c605b9ef0286c7547c88b02ff0ebdf18667ce0fb8f1a40c2bc5cdcf90",
+  "assets": [
+    {
+      "image": "before-command.png",
+      "image_sha256": "16801363877888ec561d16761f6cc702f235468bff2c84573400312cc2cc259c",
+      "screen_text": "before-command.screen.txt",
+      "screen_text_sha256": "fc73aa772d2fe6eb982461a6bc3cda0d0f5b869536879475cbf71da6f4ac5245",
+      "ansi": "before-command.ansi.gz",
+      "ansi_uncompressed_sha256": "aac77b64d5420ea1e0b31577e4a1e1bbf8a16af30bc7ef1085533c786905d90d"
+    },
+    {
+      "image": "after-command.png",
+      "image_sha256": "8d6466ee1d01a01e97cdd5ba0fb33a4d92477b0f9d3e11bd4727a089c8942ac6",
+      "screen_text": "after-command.screen.txt",
+      "screen_text_sha256": "717dca7686a46883829ade0fb0617f4047e6d3b50cb1fa826afda5a3088d0f7f",
+      "ansi": "after-command.ansi.gz",
+      "ansi_uncompressed_sha256": "51304e75e9994b2f67a57cc2c7822288c453c6535c5893922a3cac8d01b41fc1"
+    },
+    {
+      "image": "before-diff.png",
+      "image_sha256": "e4718da7943caf694ec5a1035d182e9d5fa78f720cbad4bd95b7c2a7fc321ea7",
+      "screen_text": "before-diff.screen.txt",
+      "screen_text_sha256": "8f355daedd98260ca266249b563da341e9f8d6d0aa4ef12519af11619fc0cf46",
+      "ansi": "before-diff.ansi.gz",
+      "ansi_uncompressed_sha256": "ab47d021f9436b76af717df6c5128b658dcff737795d30708b7bfc33188de81f"
+    },
+    {
+      "image": "after-diff.png",
+      "image_sha256": "753f4fa5ed988837b4083bbf17cde1ec8f6e6c6720fd79ea38c2ce402dc962b1",
+      "screen_text": "after-diff.screen.txt",
+      "screen_text_sha256": "d92be7c6b4f6f77c0e97a80146f6bb9a294522261d56406db88db55a97673e40",
+      "ansi": "after-diff.ansi.gz",
+      "ansi_uncompressed_sha256": "36ba52ca242075f1011e1e502c6768999621355a64ce6b6330fcb38aa7c8e522"
+    },
+    {
+      "image": "after-details-expanded.png",
+      "image_sha256": "c0ea4539fce59469b3fafb8fee9c0a0a0595d4fa9666268c632583fc897dc15f",
+      "screen_text": "after-details-expanded.screen.txt",
+      "screen_text_sha256": "36c1d0b1c312195fc6618b92a4cdfa7b78e009f926848c3ab741ddb2e3b742d2",
+      "ansi": "after-details-expanded.ansi.gz",
+      "ansi_uncompressed_sha256": "4633af35ec5c9825efa418098e9af2d3be3b476cbe84e093b775ccbc54c82e8f"
+    }
+  ],
   "fixture_sha256": {
     "task.txt": "109c16fceaba348183c94b726fb211c0403be41ab69ef2dcf4d582fa858040c1",
     "example-before.txt": "afa5ef20d00d3c071955a8928f0190723a93fc564d10e2f3dea15ad5d53c49bf"
   },
   "command_sha256": "7c79896cd4b1c69bb02c6053c3b5afd1a6a72f203152f00f1155fc0202942525",
-  "new_file_sha256": "7a9bcbbefca6c3d294e02f2e43607a642c788e9aebc025316f85fbde309df8e5",
-  "images_sha256": {
-    "before-command.png": "45fb1e9a707a38dc81e96f07c82c1c3638276900a6678568bd3c46ae128fecca",
-    "after-command.png": "5112a64dc18d5837952d91ba3e4324d5b0eb2b425bd9d928d4a8243de44533d3",
-    "before-diff.png": "326c33a6525c49ea40915227aec704a1168ed18d4cf24e7ad91ca6f16ea58c0a",
-    "after-diff.png": "822dd656a41066a9299c2673aef546e03ab697ecde19998a70ee6a5dde1fc086",
-    "after-details-expanded.png": "9c96a640710b1088555edf2d3d6a0c25acb79d88fd8cdbbced9af48501a4b81e"
-  },
   "live_verification": {
     "before": {
       "bash_executions": 1,
       "edited_lines": 80,
       "exact_command_and_edit_arguments": true,
-      "session_sha256": "b29699b5745e7c8bd3c49818ee242db0842caf8b237fc9b5d88a461c62345b5f",
-      "exit_status": 0
+      "session_sha256": "8b50cb1c84ff9aee3375476f2961aa59352f536311567f006785b890d1b69484",
+      "exit_status": 0,
+      "pid": 96774
     },
     "after": {
       "bash_executions": 1,
       "edited_lines": 80,
       "exact_command_and_edit_arguments": true,
-      "session_sha256": "5d1d34b4faee7b0fd78e5189c64ac55df7fa94bb0f6b082b0df9f00ceca05c9e",
-      "exit_status": 0
+      "session_sha256": "1efb93337686e406ee15f76ae9f5035f671aa82342bb28e920175fe0e2615277",
+      "exit_status": 0,
+      "pid": 96879
     }
   },
   "after_inspector_checks": [
-    "Ctrl+O preserves draft",
-    "SGR mouse click expands diff from top",
-    "search reaches after line 79",
-    "close restores draft",
-    "session file hash unchanged",
+    "Ctrl+O opened latest diff and preserved draft",
+    "SGR mouse protocol expanded full diff from top",
+    "Search reached after line 79",
+    "Closing restored draft",
+    "Saved session hash unchanged by inspection",
     "Bash execution count unchanged"
-  ]
+  ],
+  "fresh_tests": {
+    "command": "pytest -n 2 -q --tb=short sagent/repl/tool_details_test.py sagent/repl/render_test.py sagent/repl/render_diff_test.py sagent/repl/slash_test.py sagent/repl/replay_test.py sagent/repl/keybindings_test.py",
+    "passed": 244
+  },
+  "limits": [
+    "Computer Use denied Terminal access for safety reasons. No native screenshot or physical click claimed.",
+    "Directed isolated fixture. Real provider output, tools and processes; no generated response or tool output inserted."
+  ],
+  "packaging_script_sha256": "24250b7a060f9cf03f907af53627623002d214de39e9496784267bf52f72c78c",
+  "ansi_verification": "Snapshot text had normalized CR/CRLF; exact byte prefixes were recovered from the original continuous PTY logs and checked against every saved screen text cell.",
+  "screen_text_format": "Trailing blank padding omitted; the compressed ANSI preserves exact output."
 }

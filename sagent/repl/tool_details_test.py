@@ -240,6 +240,7 @@ async def test_buffered_output_retains_terminal_styles(
 
     monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TTY_COMPATIBLE", raising=False)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     with ToolDetails() as store:
@@ -256,7 +257,7 @@ async def test_buffered_output_retains_terminal_styles(
 
         render()
         expected = output.getvalue()
-        assert "\x1b[" in expected
+        assert "\x1b[2;31m" in expected
         _ = output.seek(0)
         _ = output.truncate()
 

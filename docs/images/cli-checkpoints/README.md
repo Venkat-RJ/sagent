@@ -1,10 +1,10 @@
 # Live CLI comparison
 
-The before and after runs used the same prompt, provider, model settings and terminal size.
+These images were refreshed on 2026-10-11. The before and after runs used the same prompt, provider, model settings and terminal size.
 
-Before is untouched upstream `a756247`.
-After is this branch, including the timestamp guard found during review.
-The recorded source hashes identify the files used before that guard was committed.
+Before is untouched upstream `f4db9bf079159df5ad8eedd704101ff256a99216`.
+After is PR runtime revision `6d88005a33489ae916488ff9848289f538561c07`.
+The manifest records both revisions and the actual source hashes.
 
 | Waiting for the result | |
 | --- | --- |
@@ -24,7 +24,9 @@ The fixture first returns `INITIAL_RECEIPT_OK`. A second Bash command runs in th
 
 [Full after view](after-pending-details.png) · [Exact prompt](prompt.txt) · [Capture manifest and source hashes](capture.json)
 
-The `.ansi.gz` files contain the exact terminal bytes, compressed with gzip. Their manifest hashes refer to the uncompressed bytes. The `.screen.txt` files show the terminal cells interpreted with pyte, with trailing blank padding omitted. Pillow rasterized those cells with Menlo at 18 px. No model response, runtime event or waiting line was injected. A read-only observer recorded events after the normal CLI renderer.
+The `.ansi.gz` files contain the exact terminal bytes, compressed with gzip. Their manifest hashes refer to the uncompressed bytes. The `.screen.txt` files show the terminal cells interpreted with pyte, with trailing blank padding omitted. Pillow rasterized those cells with Menlo at 18 px and Apple Symbols for gutter glyphs. Replaying each ANSI capture reproduced its saved text grid exactly. No model response, runtime event or waiting line was injected. A read-only observer recorded events after the normal CLI renderer.
+
+The fresh focused test run passed all 357 tests covering checkpoints, AgentSelf, session persistence, slash commands, rendering and replay. A separate resume check displayed the saved-report warning, exercised 40/80/120-column widths, and opened `/pending` without a model call or a change to the saved session. Both fresh sessions and the resumed session exited successfully.
 
 This is a directed UI check. The prompt asks the agent to use the available reporting mechanism. It does not prove that agents will always adopt checkpoints, or that the audit's 202 repeated waiting lines disappear. Independent model calls also produce different wording and timings.
 

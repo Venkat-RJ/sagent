@@ -31,4 +31,4 @@ progress='Initial fixture receipt verified' pending='Delayed local fixture recei
 
 
 
-[7s 17K↑ 85↓ 0↟ 0↡ $0.03]
+[8s 6486↑ 112↓ 0↟ 0↡ $0.01]

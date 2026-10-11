@@ -7,16 +7,19 @@
   gress='Both fixture receipts verified', pending='Fixture approval', user_action='Type fixture-appr
   oved.'. Use the same available reporting mechanism. End each turn after reporting. Do not poll, ed
   it files, spawn workers or claim this fixture is an external evaluation.
-  Bash Verify initial fixture receipt
+  AgentSelf status=Verify local fixture receipts
+  Bash Run initial local fixture receipt
   ⎿  python3 receipt.py --initial
      INITIAL_RECEIPT_OK
   Bash Run delayed local fixture receipt
   ⎿  python3 receipt.py
-  AgentSelf checkpoint status=Awaiting delayed fixture receipt
+  AgentSelf checkpoint
 Checkpoint (agent report)
 Progress: Initial fixture receipt verified
 Pending: Delayed local fixture receipt
 User action: None reported.
+
+Initial fixture receipt verified. Pending: delayed local fixture receipt.
 >
 
 
@@ -24,10 +27,7 @@ User action: None reported.
 
 
 
-
-
-
-[9s 23K↑ 110↓ 0↟ 0↡ $0.05]
+[14s 12K↑ 136↓ 0↟ 0↡ $0.03]
 /pending (1) | Agent report: pending-demo
 Progress: Initial fixture receipt verified
 Pending: Delayed local fixture receipt

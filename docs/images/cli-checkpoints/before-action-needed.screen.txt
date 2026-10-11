@@ -17,7 +17,7 @@ progress='Initial fixture receipt verified' pending='Delayed local fixture recei
      FINAL_RECEIPT_OK
 
 progress='Both fixture receipts verified' pending='Fixture approval' user_action='Type
-fixture-approved.'.
+fixture-approved.'
 >
 
 
@@ -31,4 +31,4 @@ fixture-approved.'.
 
 
 
-[10s 23K↑ 108↓ 0↟ 0↡ $0.05]
+[10s 8893↑ 135↓ 0↟ 0↡ $0.02]

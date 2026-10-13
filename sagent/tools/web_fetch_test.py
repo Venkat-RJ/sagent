@@ -8,13 +8,13 @@ from unittest.mock import patch
 import asyncio
 import socket
 
+from treekle import immutable
 from wesearch.fetch import PolicyParams
 from wesearch.types.errors import CloudflareChallengeError, FetchError
 from wesearch.web import FetchResult
 
 import pytest
 
-from sagent.lib.codec import immutable
 from sagent.tools.lib.bash import parse_bash
 from sagent.tools.web_fetch import (
     WebFetch,
@@ -507,6 +507,6 @@ def test_a_wget_that_streams_to_stdout_still_nudges(command: str) -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

@@ -26,11 +26,12 @@ from typing import TYPE_CHECKING, Final, Literal
 import asyncio
 import dataclasses
 
-from sagent.lib.codec import mutable
+from treekle import mutable
 
 
 if TYPE_CHECKING:
-    from sagent.lib.codec import PlainTree
+    from treekle import PlainTree
+
     from sagent.types.runtime import ToolResult
     from sagent.types.tools import Tool
 

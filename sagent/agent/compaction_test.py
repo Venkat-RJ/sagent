@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import asyncio
 
+from treekle import PlainTree
+
 import pytest
 
 from sagent.agent.background import BackgroundTaskEntry
@@ -18,7 +20,6 @@ from sagent.agent.compaction import (
 )
 from sagent.agent.state import ToolState
 from sagent.compaction.history import append_to_first_user
-from sagent.lib.codec import PlainTree
 from sagent.types.compactor import ReattachPolicy
 from sagent.types.runtime import (
     AssistantMessage,
@@ -307,6 +308,6 @@ async def test_post_compact_enrich_injects_background_status() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

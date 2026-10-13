@@ -14,6 +14,8 @@ import json
 import logging
 import os
 
+from treekle import from_plain, json_loads
+
 import httpx2
 import openai
 import pytest
@@ -21,7 +23,6 @@ import pytest
 from sagent.agent.retry import is_rate_limited, is_retryable
 from sagent.agent.session_io import _entry_from_json, _entry_to_json
 from sagent.catalog.openai import reasoning_effort
-from sagent.lib.codec import from_plain, loads
 from sagent.providers.lib.id_remap import IdRemapper
 from sagent.providers.openai.api import OpenAI
 from sagent.providers.openai.responses import (
@@ -63,7 +64,7 @@ from sagent.types.runtime import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from sagent.lib.codec import MutablePlainTree, PlainTree
+    from treekle import MutablePlainTree, PlainTree
 
 
 @dataclass(slots=True, kw_only=True)
@@ -73,7 +74,7 @@ class _Wire:
 
     async def send(self, request: httpx2.Request) -> httpx2.Response:
         self.paths.append(request.url.path)
-        self.requests.append(from_plain(loads(request.content), dict[str, object]))
+        self.requests.append(json_loads(request.content, dict[str, object]))
         if request.url.path != "/v1/responses":
             return httpx2.Response(
                 404,
@@ -202,7 +203,7 @@ async def test_api_stream_uses_responses_with_supported_knobs(
     assert response.tokens.cache_read == 4
     assert wire.paths == ["/v1/responses"]
     records = [
-        from_plain(loads(line), dict[str, object])
+        json_loads(line, dict[str, object])
         for line in log_path.read_text().splitlines()
     ]
     assert any(
@@ -1255,10 +1256,7 @@ async def test_api_astra_reasoning_tool_roundtrip_and_legacy_replay() -> None:
         assert isinstance(number, int)
         assert (number % 17, number % 19, number % 23) == (12, 7, 5)
         restored = _entry_from_json(
-            from_plain(
-                loads(json.dumps(_entry_to_json(first.message))),
-                dict[str, object],
-            ),
+            json_loads(json.dumps(_entry_to_json(first.message)), dict[str, object]),
         )
         assert isinstance(restored, AssistantMessage)
         assert restored == first.message
@@ -1305,6 +1303,6 @@ def _replay_variants(message: AssistantMessage) -> Iterator[AssistantMessage]:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

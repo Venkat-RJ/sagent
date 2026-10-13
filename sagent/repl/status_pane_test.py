@@ -8,11 +8,12 @@ from unittest.mock import MagicMock, patch
 
 import time
 
+from treekle import from_plain
+
 import pytest
 
 from sagent.agent.agent import ActivityTracker, Agent
 from sagent.agent.cost_tracker import CostTracker
-from sagent.lib.codec import from_plain
 from sagent.repl.status_pane import render_status_pane
 from sagent.types.cost import TokenCost, TokenCount
 from sagent.types.settings import AgentSettings
@@ -399,6 +400,6 @@ def test_real_agent_cost_tracker_is_compatible() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

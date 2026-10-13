@@ -10,9 +10,10 @@ import asyncio
 import base64
 import json
 
+from treekle import PlainTree
+
 import pytest
 
-from sagent.lib.codec import PlainTree
 from sagent.providers.lib.mcp_bridge import ToolsBridge
 from sagent.types.runtime import (
     BytesMessage,
@@ -706,6 +707,6 @@ def test_json_encoded_url_round_trip() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

@@ -96,10 +96,11 @@ else:
     openai = lazy_import("openai")  # 493ms cold.
 
 
+from treekle import MutablePlainTree, ReadError, from_plain, json_loads
+
 from sagent.catalog.openai import subscription, subscription_models
 from sagent.catalog.table import ModelCatalog
 from sagent.lib.atomic_file import atomic_write_bytes
-from sagent.lib.codec import MutablePlainTree, ReadError, from_plain, loads
 from sagent.providers.lib.oauth import (
     AuthCodeListener,
     credential_file_lock,
@@ -772,28 +773,25 @@ def _jwt_payload(token: str) -> dict[str, object]:
     raw = parts[1]
     raw += "=" * (-len(raw) % 4)
     try:
-        return from_plain(loads(base64.urlsafe_b64decode(raw)), dict[str, object])
+        return json_loads(base64.urlsafe_b64decode(raw), dict[str, object])
     except (ValueError, ReadError):
         return {}
 
 
 def _jwt_exp(token: str) -> float:
     """Extract ``exp`` claim from a JWT without verification."""
-    try:
-        return from_plain(_jwt_payload(token).get("exp"), float, default=0.0)
-    except ReadError:
-        return 0.0
+    exp = _jwt_payload(token).get("exp")
+    return (
+        float(exp)
+        if isinstance(exp, int | float) and not isinstance(exp, bool)
+        else 0.0
+    )
 
 
 def _jwt_claim(token: str, namespace: str, key: str) -> str:
     """Extract a nested string claim from a JWT namespace object."""
-    try:
-        claims = from_plain(
-            _jwt_payload(token).get(namespace),
-            dict[str, object],
-            default={},
-        )
-    except ReadError:
+    claims = _jwt_payload(token).get(namespace)
+    if not isinstance(claims, dict):
         return ""
-    claim = claims.get(key)
+    claim = cast(dict[str, object], claims).get(key)
     return claim if isinstance(claim, str) else ""

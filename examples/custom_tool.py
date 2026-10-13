@@ -8,8 +8,9 @@ from typing import cast
 import asyncio
 import sys
 
+from treekle import immutable
+
 from sagent.agent.agent import Agent
-from sagent.lib.codec import immutable
 from sagent.providers import Google
 from sagent.types.runtime import (
     AssistantMessage,

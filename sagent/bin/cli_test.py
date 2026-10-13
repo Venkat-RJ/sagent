@@ -16,6 +16,8 @@ import os
 import subprocess
 import sys
 
+from treekle import ReadError
+
 import pytest
 
 from sagent import sessions
@@ -58,7 +60,6 @@ from sagent.bin.cli import (
     resolve_tools,
 )
 from sagent.catalog.table import UnknownModelError
-from sagent.lib.codec import ReadError
 from sagent.providers import PROVIDER_NAMES
 from sagent.sessions import SessionInfo, project_dir
 from sagent.testing import FakeAgent, MockModelCaps
@@ -1678,6 +1679,6 @@ def test_headless_user_facing_error_has_no_class_prefix(
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

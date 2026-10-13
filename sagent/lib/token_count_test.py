@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from sagent.types.tools import Tool
 from collections.abc import Mapping
 
-from sagent.lib.codec import PlainTree
+from treekle import PlainTree
+
 from sagent.testing import MockModelCaps
 from sagent.types.model import ModelRequest
 from sagent.types.runtime import (
@@ -280,6 +281,6 @@ def test_empty_request_zero() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

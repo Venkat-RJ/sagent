@@ -10,6 +10,8 @@ import contextlib
 import json
 import time
 
+from treekle import immutable
+
 import pytest
 
 from sagent.agent.agent import Agent
@@ -18,7 +20,6 @@ from sagent.agent.background import (
     BackgroundTaskEntry,
 )
 from sagent.agent.state import agent_registry, current_agent_var
-from sagent.lib.codec import immutable
 from sagent.testing import FakeAgent, MockModelCaps, with_fake_agent
 from sagent.tools.background_task import (
     BackgroundTask,
@@ -834,6 +835,6 @@ async def test_run_unknown_operation() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

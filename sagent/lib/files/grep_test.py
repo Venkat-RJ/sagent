@@ -11,9 +11,10 @@ import pathlib
 import shutil
 import subprocess
 
+from treekle import from_plain
+
 import pytest
 
-from sagent.lib.codec import from_plain
 from sagent.lib.files.grep import (
     ARGV_CHARS,
     GrepError,
@@ -941,6 +942,6 @@ def test_patterns_that_spell_flags_do_not_change_output(
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

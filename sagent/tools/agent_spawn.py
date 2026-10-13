@@ -27,6 +27,8 @@ import logging
 import time
 import uuid
 
+from treekle import PlainTree, from_plain, immutable
+
 from sagent.agent.agent import Agent, SystemPromptArg
 from sagent.agent.background import BackgroundTaskEntry
 from sagent.agent.session_io import (
@@ -42,7 +44,6 @@ from sagent.agent.state import (
     get_tool_state,
     max_depth_var,
 )
-from sagent.lib.codec import PlainTree, from_plain, immutable
 from sagent.providers import PROVIDER_NAMES
 from sagent.providers.providers import (
     build_provider_with_account_fallback,
@@ -541,7 +542,7 @@ class AgentSpawn:
             settings.cache_ttl_sec = cast(float, model_options["cache_ttl_sec"])
         if "service_tier" in model_options:
             settings.service_tier = cast(ServiceTier, model_options["service_tier"])
-        return Agent(
+        child = Agent(
             model=child_model,
             model_recipe=child_spec,
             system=child_system,
@@ -554,6 +555,12 @@ class AgentSpawn:
             tool_results=self._tool_results,
             owned_provider=owned_provider,
         )
+        if parent_agent is not None:
+            # A child's state defaults to the host's cwd, which a shell behind another
+            # account cannot enter; it begins where its parent's shell is.
+            child.tool_state.start_cwd = parent_agent.tool_state.start_cwd
+            child.tool_state.bash_cwd = parent_agent.tool_state.bash_cwd
+        return child
 
     # Both lifecycles register the child under its stable ``label`` (so ``/send`` and
     # ``AgentSend`` can reach it) and run a live inbox-serviceable loop. ``"oneshot"``
@@ -1273,7 +1280,7 @@ def _last_agent_send_content(message: AssistantMessage) -> str | None:
     """Return the most recent non-empty ``AgentSend`` ``content`` in ``message``."""
     for tc in reversed(message.tool_calls):
         if tc.name == "AgentSend":
-            content = tc.args.get("content", "")
+            content = tc.args.get("content")
             if isinstance(content, str) and content:
                 return content
     return None

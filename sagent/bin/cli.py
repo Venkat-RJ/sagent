@@ -61,6 +61,8 @@ import shlex
 import signal
 import sys
 
+from treekle import from_plain, json_loads
+
 from sagent import (
     providers,
     sessions,
@@ -77,7 +79,6 @@ from sagent.agent.session_io import (
 from sagent.agent.state import agent_registry, unique_registry_label
 from sagent.catalog.table import UnknownModelError, UnsupportedTagError
 from sagent.compaction.summary import SummaryCompactor
-from sagent.lib.codec import from_plain
 from sagent.lib.userdirs import data_dir
 from sagent.prompt import build_system
 from sagent.providers import (
@@ -129,7 +130,8 @@ from sagent.types.runtime import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
 
-    from sagent.lib.codec import MutablePlainTree
+    from treekle import MutablePlainTree
+
     from sagent.types.tools import (
         Tool,
     )
@@ -1446,13 +1448,12 @@ def _parse_stream_json(raw: str) -> str:
         if not line:
             continue
         try:
-            obj: object = json.loads(line)
+            record = json_loads(line, dict[str, object])
         except json.JSONDecodeError as e:
             raise ValueError(f"invalid JSON line in stream-json input: {e}") from e
-        # ``read`` raises on a non-object, which is fatal. A bare ``{}`` is a
+        # A non-object raises ``ReadError``, which is fatal. A bare ``{}`` is a
         # valid prompt-less line and must be skipped, exactly like the
         # prompt-less ``{"other": "data"}``.
-        record = from_plain(obj, dict[str, object])
         p = from_plain(record.get("prompt"), str, default="")
         if p:
             prompts.append(p)

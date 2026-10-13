@@ -153,12 +153,12 @@ def test_estimate_entry_tokens_counts_every_wire_surface() -> None:
     ]
     via_history = estimate_entry_tokens(model, entries)
     via_request = model.approx_request_tokens(
-        ModelRequest(messages=entries, system=None, tools=None),
+        ModelRequest(messages=entries),
     )
     assert via_history == via_request
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

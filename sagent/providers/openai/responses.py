@@ -11,6 +11,8 @@ import inspect
 import json
 import logging
 
+from treekle import from_plain, json_loads, mutable
+
 from sagent.catalog.openai import (
     keeps_reasoning_across_turns,
     reasoning_effort,
@@ -18,7 +20,6 @@ from sagent.catalog.openai import (
 )
 from sagent.catalog.table import base_model_id
 from sagent.lib import debug_log
-from sagent.lib.custom_json import convert, json_unfreeze, parse
 from sagent.providers.lib.errors import (
     StreamingResponseNotReadError,
     error_status_code,
@@ -55,7 +56,7 @@ from sagent.types.runtime import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterable, Callable, Mapping
+    from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 
     from openai.types import responses
     from openai.types.responses.response_create_params import (
@@ -225,7 +226,7 @@ class _OpenAIResponsesModel(ModelDefaults):
                 max_image_dim=self.limits.max_image_edge_px,
                 max_image_bytes=self.limits.max_image_bytes,
             ),
-            "instructions": request.system or "",
+            "instructions": request.system,
             "stream": True,
             "store": False,
         }
@@ -311,7 +312,7 @@ _STREAM_ERROR_STATUS: Final[dict[str, int]] = {
 
 
 def _build_tools(
-    tools: list[Tool],
+    tools: Sequence[Tool],
 ) -> list[responses.FunctionToolParam]:
     """Translate each ``Tool`` into a Responses API function-tool param."""
     return [_build_tool(t) for t in tools]
@@ -323,7 +324,7 @@ def _build_tool(tool: Tool) -> responses.FunctionToolParam:
         "type": "function",
         "name": tool.name,
         "description": tool.description,
-        "parameters": dict(json_unfreeze(tool.directive_schema)),
+        "parameters": dict(mutable(tool.directive_schema)),
         "strict": None,
     }
 
@@ -482,8 +483,8 @@ def _terminal_metadata(response: object) -> tuple[str, str, int, int, int, int]:
     usage = getattr(response, "usage", None)
     if usage is None:
         return message_id, status, 0, 0, 0, 0
-    input_tokens = convert(getattr(usage, "input_tokens", None), int)
-    output_tokens = convert(getattr(usage, "output_tokens", None), int)
+    input_tokens = from_plain(getattr(usage, "input_tokens", None), int)
+    output_tokens = from_plain(getattr(usage, "output_tokens", None), int)
     cache_read = 0
     cache_write = 0
     details = getattr(usage, "input_tokens_details", None)
@@ -493,8 +494,8 @@ def _terminal_metadata(response: object) -> tuple[str, str, int, int, int, int]:
         # through ``to_dict``. Reading the mapping keeps new usage data without
         # an Any cast or waiting for an SDK schema release.
         raw_details = cast(_UsageDetails, details).to_dict()
-        cache_read = convert(raw_details.get("cached_tokens"), int, default=0)
-        cache_write = convert(raw_details.get("cache_write_tokens"), int, default=0)
+        cache_read = from_plain(raw_details.get("cached_tokens"), int, default=0)
+        cache_write = from_plain(raw_details.get("cache_write_tokens"), int, default=0)
     return (
         message_id,
         status,
@@ -660,7 +661,7 @@ async def _consume_stream(
                         incomplete = getattr(resp, "incomplete_details", None)
                         if getattr(incomplete, "reason", None) == "content_filter":
                             finish_reason = "content_filter"
-                    reported_tier = convert(
+                    reported_tier = from_plain(
                         getattr(resp, "service_tier", None),
                         str,
                         default=None,
@@ -852,7 +853,7 @@ def _parse_tool_arguments(
             continue
         saw_args = True
         try:
-            parsed = parse(args_str, dict[str, object])
+            parsed = json_loads(args_str, dict[str, object])
         except json.JSONDecodeError:
             logger.warning(
                 "OpenAI Responses tool arguments were invalid JSON: "
@@ -888,9 +889,9 @@ def _parse_tool_arguments(
             tool_name,
             call_id,
         )
-    delta = parsed_by_source.get("delta")
-    done = parsed_by_source.get("done")
-    if delta is not None and done is not None and delta != done:
+    delta = parsed_by_source.get("delta", {})
+    done = parsed_by_source.get("done", {})
+    if len(parsed_by_source) == 2 and delta != done:
         logger.warning(
             "OpenAI Responses tool arguments differed between delta and done: "
             "tool=%s call_id=%s delta_chars=%d done_chars=%d "
@@ -911,7 +912,7 @@ def _parse_tool_arguments(
             call_id,
             len(delta_args),
             len(done_args),
-            len(delta) if delta is not None else -1,
+            len(delta) if "delta" in parsed_by_source else -1,
             len(done),
         )
         return done
@@ -925,9 +926,5 @@ def _parse_tool_arguments(
             len(done_args),
             len(delta),
         )
-        return delta
-    if done is not None:
-        return done
-    if delta is not None:
         return delta
     return {}

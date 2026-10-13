@@ -111,7 +111,9 @@ def _nudging_tools(command: str) -> set[str]:
     trees = parse_bash(command)
     assert trees is not None, f"failed to parse: {command!r}"
     return {
-        t.name for t in _MATCHERS if isinstance(t, BashMatcher) and t.bash_match(trees)
+        t.name
+        for t in _MATCHERS
+        if isinstance(t, BashMatcher) and t.bash_match(trees) is not None
     }
 
 
@@ -772,6 +774,6 @@ def test_a_rendered_fragment_is_shell_safe_and_delimited() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

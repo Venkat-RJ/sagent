@@ -7,10 +7,12 @@ process cache, and text rendering.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import asyncio
 
+from treekle import PlainTree, immutable
 from wesearch.paper.authors import author_metadata, author_papers, search_authors
 from wesearch.paper.errors import PaperError
 from wesearch.paper.render import (
@@ -22,7 +24,6 @@ from wesearch.paper.render import (
 
 import cachetools
 
-from sagent.lib.custom_json import JSON, json_freeze
 from sagent.tools.core import load_tool_description, opt_int
 from sagent.tools.paper_common import (
     parse_optional_ids,
@@ -48,7 +49,7 @@ class PaperAuthor:
     tool_id: str = "application/x-tool-paperauthor"
     clearable_results: bool = True
     description: str = load_tool_description("PaperAuthor")
-    directive_schema: JSON = json_freeze(
+    directive_schema: Mapping[str, PlainTree] = immutable(
         {
             "type": "object",
             "properties": {

@@ -39,6 +39,8 @@ import os
 import threading
 import time
 
+from treekle import ReadError, from_plain
+
 from sagent.agent.context import (
     alive_splices,
     masked_refs_by_alive,
@@ -50,7 +52,6 @@ from sagent.agent.state import (
     ToolState,
 )
 from sagent.lib.atomic_file import write_all
-from sagent.lib.custom_json import ReadError, convert
 from sagent.providers.providers import (
     build_provider_with_account_fallback,
 )
@@ -1732,7 +1733,7 @@ def _persistent_state(raw: object) -> PersistentAgentState | None:
 def _read[T](raw: object, target: type[T], default: T) -> T:
     """Decode a persisted scalar; a missing or wrongly typed value takes ``default``."""
     try:
-        return convert(raw, target, default=default)
+        return from_plain(raw, target, default=default)
     except ReadError:
         return default
 

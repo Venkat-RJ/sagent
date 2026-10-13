@@ -41,8 +41,10 @@ Sagent infers the JSON Schema from type hints. Decorated functions get `tool_id 
 Use a class when the tool needs state, custom schema, a prompt section, custom summaries, or direct `Message` control.
 
 ```python
+from collections.abc import Mapping
+
 from sagent.custom_types import Message, TextMessage
-from sagent.lib.custom_json import JSON, json_freeze
+from sagent.lib.codec import PlainTree, immutable
 from sagent.lib.message import get_directive
 
 
@@ -51,7 +53,7 @@ class EchoTool:
     tool_id = "application/x-tool-echo"
     description = "Echo text back to the caller."
     supports_microcompaction = True
-    directive_schema: JSON = json_freeze(
+    directive_schema: Mapping[str, PlainTree] = immutable(
         {
             "type": "object",
             "properties": {"text": {"type": "string"}},
@@ -115,6 +117,41 @@ class EchoTool:
 `Bash` runs `/bin/bash -c <command>` with the agent process permissions. The default timeout is 120 seconds and the maximum is 600 seconds.
 
 When `Bash` is constructed with peer tools, it can warn the model when a dedicated tool should be used instead of a shell command.
+
+### Running the shell through a wrapper
+
+Library users can start the shell through a wrapper command, such as one that runs it
+as another user or in a container, and can give the spawned process an explicit
+environment. Both options are off by default and cannot be set from the command line.
+
+```python
+from sagent.tools import Bash
+
+shell = Bash(
+    exec_prefix=("/usr/local/bin/run-isolated",),
+    env={"TERM": "xterm-256color", "PATH": "/usr/bin:/bin"},
+)
+```
+
+- `exec_prefix`: words placed before `/bin/bash`. The wrapper receives the shell
+  command as its arguments and must run them with the exit status and the output
+  and error streams unchanged. It must also leave the shell's standard input
+  connected, because Sagent uses it to stop the shell (see
+  [Security](security.md#running-the-shell-through-a-wrapper)). Empty runs the shell
+  directly.
+- `env`: the environment of the spawned process. `None` inherits the Sagent process's
+  environment. A mapping replaces it entirely, so a variable that is not in it, such
+  as a provider key, is not passed to the wrapper. The shell sees whatever the
+  wrapper carries across.
+- Working directory: the wrapper starts in `/`. The shell enters the tool's
+  directory itself, falling back to the directory Sagent started in and then to `/`.
+  Sagent takes the directory the shell reports without checking that it exists,
+  because the shell may run where Sagent cannot look.
+- The shell's standard input is empty, as it is without a wrapper.
+
+The wrapper changes where the shell runs. It does not change what the other tools can
+reach: `Read`, `Write`, `Edit`, `Grep`, `Glob`, `List`, and `Skill` still run inside
+the Sagent process.
 
 ## Web tools
 

@@ -16,10 +16,13 @@ to load before ``agent/`` is fully initialized.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 import asyncio
 import time
+
+from treekle import PlainTree, immutable
 
 from sagent.agent.agent import Agent
 from sagent.agent.session_io import append_persistent_agent_lifecycle
@@ -28,7 +31,6 @@ from sagent.agent.state import (
     agent_registry,
     current_agent_var,
 )
-from sagent.lib.custom_json import JSON, json_freeze
 from sagent.tools.core import load_tool_description
 from sagent.types.runtime import (
     CANCELLED_PLACEHOLDER,
@@ -59,7 +61,7 @@ class BackgroundTask:
     tool_id: str = "application/x-tool-backgroundtask"
     clearable_results: bool = False
     description: str = load_tool_description("BackgroundTask")
-    directive_schema: JSON = json_freeze(
+    directive_schema: Mapping[str, PlainTree] = immutable(
         {
             "type": "object",
             "properties": {

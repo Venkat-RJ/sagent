@@ -17,7 +17,7 @@ from sagent.types.runtime import UserMessage
 
 
 if TYPE_CHECKING:
-    from sagent.lib.custom_json import MutableJSON
+    from treekle import MutablePlainTree
 
 
 def test_moonshot_from_key() -> None:
@@ -74,7 +74,7 @@ def _body(
     *,
     budget: ThinkingBudget | None = None,
     effort: ThinkingEffort | None = None,
-) -> MutableJSON:
+) -> dict[str, MutablePlainTree]:
     m = cast(_MoonshotModel, Moonshot.from_key("k").model(model_id))
     settings = ModelSettings.narrowest(m.capability)
     if budget is not None:
@@ -117,6 +117,6 @@ def test_the_wire_carries_the_vendor_id() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

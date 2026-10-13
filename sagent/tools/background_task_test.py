@@ -10,6 +10,8 @@ import contextlib
 import json
 import time
 
+from treekle import immutable
+
 import pytest
 
 from sagent.agent.agent import Agent
@@ -18,7 +20,6 @@ from sagent.agent.background import (
     BackgroundTaskEntry,
 )
 from sagent.agent.state import agent_registry, current_agent_var
-from sagent.lib.custom_json import json_freeze
 from sagent.testing import FakeAgent, MockModelCaps, with_fake_agent
 from sagent.tools.background_task import (
     BackgroundTask,
@@ -96,7 +97,7 @@ class _DummyInner:
     tool_id: str = "application/x-tool-dummy"
     description: str = "dummy"
     clearable_results: bool = False
-    directive_schema = json_freeze(
+    directive_schema = immutable(
         {
             "type": "object",
             "properties": {"x": {"type": "string"}},
@@ -156,7 +157,7 @@ def test_aware_schema_without_properties_injects_background_fields() -> None:
         tool_id: str = "application/x-tool-np"
         description: str = ""
         clearable_results: bool = False
-        directive_schema = json_freeze({"type": "object"})
+        directive_schema = immutable({"type": "object"})
 
         def summary(self, args: Mapping[str, object]) -> str:
             del args
@@ -834,6 +835,6 @@ async def test_run_unknown_operation() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

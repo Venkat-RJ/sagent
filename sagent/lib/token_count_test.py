@@ -9,12 +9,15 @@ from sagent.lib.token_count import approx_request_tokens
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     import pytest
 
     from sagent.types.tools import Tool
-from sagent.lib.custom_json import JSON
+from collections.abc import Mapping
+
+from treekle import PlainTree
+
 from sagent.testing import MockModelCaps
 from sagent.types.model import ModelRequest
 from sagent.types.runtime import (
@@ -47,7 +50,9 @@ class _StubTool:
     name: str = "Stub"
     tool_id: str = "application/x-tool-stub"
     description: str = ""
-    directive_schema: JSON = field(default_factory=lambda: {"type": "object"})
+    directive_schema: Mapping[str, PlainTree] = field(
+        default_factory=lambda: {"type": "object"},
+    )
     clearable_results: bool = False
 
     def summary(self, args: Mapping[str, object]) -> str:
@@ -73,8 +78,8 @@ class _StubTool:
 def _req(
     messages: list[ModelContextEvent],
     *,
-    system: str | None = None,
-    tools: list[Tool] | None = None,
+    system: str = "",
+    tools: Sequence[Tool] = (),
 ) -> ModelRequest:
     return ModelRequest(messages=messages, system=system, tools=tools)
 
@@ -276,6 +281,6 @@ def test_empty_request_zero() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

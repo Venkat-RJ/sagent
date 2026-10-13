@@ -32,7 +32,8 @@ from sagent.providers.openai.compat import (
 
 
 if TYPE_CHECKING:
-    from sagent.lib.custom_json import MutableJSON
+    from treekle import MutablePlainTree
+
     from sagent.types.model import (
         ModelRequest,
     )
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
 class _DashScopeModel(OpenAICompatModel):
     """DashScope backend - reasoning_content, enable_thinking routing."""
 
-    _reasoning_field: ClassVar[str | None] = "reasoning_content"
+    _reasoning_field: ClassVar[str] = "reasoning_content"
 
     # The base spells effort in OpenAI's vocabulary (``xhigh`` -> ``high``),
     # which DashScope either rejects or folds differently, so it is dropped
@@ -49,9 +50,9 @@ class _DashScopeModel(OpenAICompatModel):
     @override
     def _transform_body(
         self,
-        body: MutableJSON,
+        body: dict[str, MutablePlainTree],
         request: ModelRequest,
-    ) -> MutableJSON:
+    ) -> dict[str, MutablePlainTree]:
         """Map sagent's thinking axes onto DashScope's knobs."""
         del request
         body.pop("reasoning_effort", None)

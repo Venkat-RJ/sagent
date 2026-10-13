@@ -8,8 +8,9 @@ from typing import cast
 import asyncio
 import sys
 
+from treekle import immutable
+
 from sagent.agent.agent import Agent
-from sagent.lib.custom_json import json_freeze
 from sagent.providers import Google
 from sagent.types.runtime import (
     AssistantMessage,
@@ -25,7 +26,7 @@ class CharacterCount:
     tool_id = "application/x-tool-character-count"
     clearable_results = True
     description = "Count Unicode code points in a string."
-    directive_schema = json_freeze(
+    directive_schema = immutable(
         {
             "type": "object",
             "properties": {

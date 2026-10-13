@@ -221,13 +221,13 @@ async def test_a_consult_that_exhausts_its_retries_is_a_tool_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_blank_system_is_none() -> None:
+async def test_run_blank_system_is_empty() -> None:
     inner = StubProviderModel(text="ok")
     _ = await Advisor(model=inner, system="").run({"prompt": "p"})
-    assert inner.received[0].system is None
+    assert inner.received[0].system == ""
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

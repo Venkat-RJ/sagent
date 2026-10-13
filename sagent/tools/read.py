@@ -10,12 +10,13 @@ import asyncio
 import json
 import re
 
+from treekle import ReadError, from_plain, immutable, json_loads
+
 from sagent.agent.state import (
     approx_tokens,
     current_agent_var,
     get_tool_state,
 )
-from sagent.lib.custom_json import convert, json_freeze
 from sagent.tools.core import (
     bound_by_tokens,
     file_lock_key,
@@ -111,7 +112,7 @@ class Read:
     # Never persisted: Read pages itself at ``MAX_RESULT_TOKENS``.
     max_result_chars = 0
     description = load_tool_description("Read")
-    directive_schema = json_freeze(
+    directive_schema = immutable(
         {
             "type": "object",
             "properties": {
@@ -172,11 +173,11 @@ class Read:
 
         """
         file_path = resolve_tool_path(str(args.get("file_path", "")))
-        offset = convert(args.get("offset"), int, default=1)
+        offset = from_plain(args.get("offset"), int, default=1)
         # ``0`` means "to EOF"; the token bound in ``_window_text`` is what
         # actually stops the read, so no line-count default is needed.
-        limit = convert(args.get("limit"), int, default=0)
-        last_lines = convert(args.get("last_lines"), int, default=0)
+        limit = from_plain(args.get("limit"), int, default=0)
+        last_lines = from_plain(args.get("last_lines"), int, default=0)
         pages = str(args.get("pages", ""))
         # Schema declares ``offset``/``limit``/``last_lines`` as
         # ``minimum: 1`` integers but ``get(..., int)`` accepts any int
@@ -254,9 +255,9 @@ class Read:
         """
         file_path = str(args.get("file_path", ""))
         fname = Path(file_path).name if file_path else "?"
-        offset = convert(args.get("offset"), int, default=0)
-        limit = convert(args.get("limit"), int, default=0)
-        last_lines = convert(args.get("last_lines"), int, default=0)
+        offset = from_plain(args.get("offset"), int, default=0)
+        limit = from_plain(args.get("limit"), int, default=0)
+        last_lines = from_plain(args.get("last_lines"), int, default=0)
         if last_lines > 0:
             suffix = f":last-{last_lines}"
         elif offset > 0 and limit > 0:
@@ -400,7 +401,7 @@ def _read_image(p: Path, *, file_path: str, suffix: str) -> ToolResult:
 def _read_notebook(p: Path, *, file_path: str) -> ToolResult:
     """Parse a Jupyter notebook and return cell contents as text."""
     try:
-        nb = json.loads(p.read_text(encoding="utf-8"))
+        nb_d = json_loads(p.read_text(encoding="utf-8"), dict[str, object])
     # ``is_error`` on every unreadable shape, matching the missing-file
     # and not-a-file paths above: a caller branching on the flag -- which
     # is what it exists for -- otherwise reads a corrupt notebook as a
@@ -417,23 +418,22 @@ def _read_notebook(p: Path, *, file_path: str) -> ToolResult:
             content=f"[Non-UTF-8 notebook: {file_path}: {e}]",
             is_error=True,
         )
-    if not isinstance(nb, dict):
+    except ReadError:
         return ToolResult(
             call_id="",
             content=f"[Not a valid Jupyter notebook: {file_path}]",
             is_error=True,
         )
-    nb_d = convert(cast(object, nb), dict[str, object])
-    cells_raw = convert(nb_d.get("cells"), object, default=[])
+    cells_raw = from_plain(nb_d.get("cells"), object, default=[])
     cells = cast(list[object], cells_raw) if isinstance(cells_raw, list) else []
     parts: list[str] = []
     for i, cell in enumerate(cells):
         if not isinstance(cell, dict):
             continue
-        cell_d = convert(cast(object, cell), dict[str, object])
-        ctype = convert(cell_d.get("cell_type"), str, default="") or "code"
+        cell_d = from_plain(cast(object, cell), dict[str, object])
+        ctype = from_plain(cell_d.get("cell_type"), str, default="") or "code"
         parts.append(f"--- Cell {i + 1} ({ctype}) ---")
-        parts.append(_joined(convert(cell_d.get("source"), object, default=None)))
+        parts.append(_joined(from_plain(cell_d.get("source"), object, default=None)))
         _collect_cell_outputs(cell_d, parts)
     # Bounded like every other Read path. This one never reaches
     # ``_window_text``, so before the token bound existed a large notebook
@@ -455,20 +455,22 @@ def _read_notebook(p: Path, *, file_path: str) -> ToolResult:
 # notebook for.
 def _collect_cell_outputs(cell: Mapping[str, object], parts: list[str]) -> None:
     """Append text outputs from a notebook cell to ``parts``."""
-    outputs_raw = convert(cell.get("outputs"), object, default=[])
+    outputs_raw = from_plain(cell.get("outputs"), object, default=[])
     outputs = cast(list[object], outputs_raw) if isinstance(outputs_raw, list) else []
     for out_d in outputs:
         if not isinstance(out_d, dict):
             continue
-        output = convert(cast(object, out_d), dict[str, object])
-        text = _joined(convert(output.get("text"), object, default=None))
+        output = from_plain(cast(object, out_d), dict[str, object])
+        text = _joined(from_plain(output.get("text"), object, default=None))
         if not text:
-            data = convert(output.get("data"), object, default=None)
+            data = from_plain(output.get("data"), object, default=None)
             if isinstance(data, dict):
-                data_d = convert(cast(object, data), dict[str, object])
-                text = _joined(convert(data_d.get("text/plain"), object, default=None))
+                data_d = from_plain(cast(object, data), dict[str, object])
+                text = _joined(
+                    from_plain(data_d.get("text/plain"), object, default=None),
+                )
         if not text:
-            text = _joined(convert(output.get("traceback"), object, default=None))
+            text = _joined(from_plain(output.get("traceback"), object, default=None))
         if text:
             parts.append("[output] " + text)
 
@@ -478,8 +480,8 @@ def _joined(raw: object) -> str:
     if raw is None:
         return ""
     if isinstance(raw, (list, tuple)):
-        return "".join(str(x) for x in convert(cast(object, raw), list[object]))
-    return convert(raw, str)
+        return "".join(str(x) for x in from_plain(cast(object, raw), list[object]))
+    return from_plain(raw, str)
 
 
 def _read_text(

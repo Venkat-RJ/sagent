@@ -8,10 +8,12 @@ limiting.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final
 
 import asyncio
 
+from treekle import PlainTree, from_plain, immutable
 from wesearch.paper.errors import PaperError
 from wesearch.paper.render import (
     format_record,
@@ -21,7 +23,6 @@ from wesearch.paper.search import Source, search
 
 import cachetools
 
-from sagent.lib.custom_json import JSON, convert, json_freeze
 from sagent.tools.core import load_tool_description, opt_int
 from sagent.tools.paper_common import (
     validate_abstract_chars,
@@ -62,7 +63,7 @@ class PaperSearch:
         """Return the tool description, re-evaluating ``{{NOW}}`` each access."""
         return load_tool_description("PaperSearch")
 
-    directive_schema: JSON = json_freeze(
+    directive_schema: Mapping[str, PlainTree] = immutable(
         {
             "type": "object",
             "properties": {
@@ -170,7 +171,7 @@ class PaperSearch:
         year_error = validate_year_range(year_from, year_to)
         if year_error is not None:
             return year_error
-        open_access_only = convert(args.get("open_access_only"), bool, default=False)
+        open_access_only = from_plain(args.get("open_access_only"), bool, default=False)
         cap = validate_abstract_chars(opt_int(args, "abstract_chars"))
         if isinstance(cap, ToolResult):
             return cap

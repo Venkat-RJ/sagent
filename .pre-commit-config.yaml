@@ -192,6 +192,15 @@ repos:
 
   - repo: local
     hooks:
+      # Spooled hooks. pre-commit splits a hook's filenames into 128 KiB argv
+      # chunks and calls it once per chunk, serially: `--all-files` called each
+      # whole-repo hook 3-5 times, one exporting all 8 packages 5 times (161s
+      # for a 5.5s job) and the pytest chunks racing on one `.coverage`. Each
+      # heavy hook is therefore a pair. `<id>-pre`, with the SAME file
+      # selectors, appends pre-commit's chunks to a NUL-delimited file keyed by
+      # the pre-commit process; `<id>` follows with `pass_filenames: false`,
+      # loads that file as "$@", deletes it, and runs once.
+      #
       # Single definition of `&worker-entry` anchor.
       #
       # It sizes $WORKERS, then runs the hook's command line from the single
@@ -326,6 +335,21 @@ repos:
       # processes and ~96 Node workers on a 16-core box. Serial partitioning is
       # what makes $WORKERS a cap.
       #
+        # `basedpyright` takes no filenames, so pre-commit cannot split its work
+        # into argv chunks; this twin collects them into a spool file.
+      - id: basedpyright-pre
+        name: basedpyright-pre
+        language: system
+        stages: [pre-commit]
+        require_serial: true
+        types_or: [python, pyi]
+        exclude: |
+          (?x)^(
+            typings/
+            |(.*/)?third_party/
+          )
+        entry: >-
+          bash -c 'p=$PPID; while [ "$p" -gt 1 ]; do case "$(ps -o command= -p "$p")" in *pre[-_]commit\ *) break;; esac; p=$(ps -o ppid= -p "$p" | tr -d " "); done; d=${TMPDIR:-/tmp}/precommit-spool-$(id -u); mkdir -p -m 700 "$d"; printf "%s\0" "$@" >> "$d/$0.$p"' basedpyright
       - id: basedpyright
         name: basedpyright
         language: system
@@ -334,6 +358,7 @@ repos:
         # note on `verbose`); this keeps basedpyright's summary line visible.
         verbose: true
         require_serial: true
+        pass_filenames: false
         # See `superseded-at-pre-push` at the head of the Pre-Push Gates section.
         alias: superseded-at-pre-push
         types_or: [python, pyi]
@@ -354,6 +379,7 @@ repos:
         args:
           - WORKERS_BASEDPYRIGHT
           - |
+            p=$PPID; while [ "$p" -gt 1 ]; do case "$(ps -o command= -p "$p")" in *pre[-_]commit\ *) break;; esac; p=$(ps -o ppid= -p "$p" | tr -d " "); done; spool=${TMPDIR:-/tmp}/precommit-spool-$(id -u)/basedpyright.$p; files=(); if [ -f "$spool" ]; then while IFS= read -r -d "" f; do files+=("$f"); done < "$spool"; rm -f "$spool"; set -- "${files[@]}"; fi;
             files=("$@")
             check=(basedpyright --threads="$WORKERS")
             exec env NODE_OPTIONS=--max-old-space-size=2048 \
@@ -416,11 +442,22 @@ repos:
             uv --quiet run --frozen --group pre-commit coverage erase
           ' bash
 
+        # `pytest` takes no filenames, so pre-commit cannot split its work
+        # into argv chunks; this twin collects them into a spool file.
+      - id: pytest-pre
+        name: pytest-pre
+        language: system
+        stages: [pre-commit]
+        require_serial: true
+        types: [python]
+        entry: >-
+          bash -c 'p=$PPID; while [ "$p" -gt 1 ]; do case "$(ps -o command= -p "$p")" in *pre[-_]commit\ *) break;; esac; p=$(ps -o ppid= -p "$p" | tr -d " "); done; d=${TMPDIR:-/tmp}/precommit-spool-$(id -u); mkdir -p -m 700 "$d"; printf "%s\0" "$@" >> "$d/$0.$p"' pytest
       - id: pytest
         name: pytest
         language: system
         stages: [pre-commit]
         require_serial: true
+        pass_filenames: false
         # See `basedpyright` above: a passing hook's output is discarded, which
         # made "did any test run at all?" unanswerable from a green line.
         verbose: true
@@ -445,6 +482,7 @@ repos:
         args:
           - WORKERS_PYTEST
           - |
+            p=$PPID; while [ "$p" -gt 1 ]; do case "$(ps -o command= -p "$p")" in *pre[-_]commit\ *) break;; esac; p=$(ps -o ppid= -p "$p" | tr -d " "); done; spool=${TMPDIR:-/tmp}/precommit-spool-$(id -u)/pytest.$p; files=(); if [ -f "$spool" ]; then while IFS= read -r -d "" f; do files+=("$f"); done < "$spool"; rm -f "$spool"; set -- "${files[@]}"; fi;
             tests=();
             if [ ${#tests[@]} -eq 0 ]; then
               for f in "$@"; do
@@ -494,25 +532,34 @@ repos:
       # Keep after pytest: pre-commit runs hooks in declaration order.
       # Missing coverage is normal when no source module was tested.
       #
-      # Reports the CHANGED source files only. `pytest` measures each changed
-      # file's whole directory (`--cov=${f%/*}`), so an unfiltered report lists
-      # every untested sibling at 0% -- one edit in a 70-module directory
-      # buried the changed files' numbers under 70 lines of noise.
-      #
-      # A changed file coverage never measured (`scripts/`, `tools/` are
-      # omitted) leaves `--include` matching nothing, and coverage exits 1 with
-      # "No data to report." That is an empty summary, not a failure; every
-      # other coverage error still fails the hook.
+      # Lists the 20 worst CHANGED source files a test executed that are below
+      # 95%, then one count line for the rest. `pytest` measures each changed
+      # file's whole directory (`--cov=${f%/*}`), and `--all-files` printed
+      # 2,700 rows, 2,348 of them 0% files no test executed. Never
+      # `coverage report --include`: it matched 2,727 globs per file for 48s.
+      # An unreadable data file still fails the hook.
+        # `coverage-summary` takes no filenames, so pre-commit cannot split its work
+        # into argv chunks; this twin collects them into a spool file.
+      - id: coverage-summary-pre
+        name: coverage-summary-pre
+        language: system
+        stages: [pre-commit]
+        require_serial: true
+        types: [python]
+        entry: >-
+          bash -c 'p=$PPID; while [ "$p" -gt 1 ]; do case "$(ps -o command= -p "$p")" in *pre[-_]commit\ *) break;; esac; p=$(ps -o ppid= -p "$p" | tr -d " "); done; d=${TMPDIR:-/tmp}/precommit-spool-$(id -u); mkdir -p -m 700 "$d"; printf "%s\0" "$@" >> "$d/$0.$p"' coverage-summary
       - id: coverage-summary
         name: coverage-summary
         language: system
         stages: [pre-commit]
         types: [python]
         require_serial: true
+        pass_filenames: false
         # Pre-commit otherwise hides the report when this hook passes.
         verbose: true
         entry: >-
           bash -c '
+            p=$PPID; while [ "$p" -gt 1 ]; do case "$(ps -o command= -p "$p")" in *pre[-_]commit\ *) break;; esac; p=$(ps -o ppid= -p "$p" | tr -d " "); done; spool=${TMPDIR:-/tmp}/precommit-spool-$(id -u)/coverage-summary.$p; files=(); if [ -f "$spool" ]; then while IFS= read -r -d "" f; do files+=("$f"); done < "$spool"; rm -f "$spool"; set -- "${files[@]}"; fi;
             uv --quiet run --frozen --group pre-commit python -c "import coverage" 2>/dev/null || exit 0;
             [ -f .coverage ] || exit 0;
             sources=();
@@ -523,12 +570,7 @@ repos:
               esac;
             done;
             ((${#sources[@]})) || exit 0;
-            include=$(IFS=,; printf "%s" "${sources[*]}");
-            report=$(uv --quiet run --frozen --group pre-commit coverage report --skip-covered --precision=1 --sort=cover --include="$include");
-            status=$?;
-            [ "$report" = "No data to report." ] && exit 0;
-            printf "%s\n" "$report";
-            exit "$status"
+            printf "%s\n" "${sources[@]}" | uv --quiet run --frozen --group pre-commit python -c "import os, sys, coverage; c = coverage.Coverage(); c.load(); data = c.get_data(); files = sys.stdin.read().split(); ran = [f for f in files if data.lines(os.path.abspath(f))]; rows = sorted((100 * (len(s) - len(m)) / len(s), f, len(m), len(s), gaps) for f, s, _, m, gaps in map(c.analysis2, ran) if 100 * (len(s) - len(m)) < 95 * len(s)); rows and print(\"\n\".join(f\"{p:5.1f}%  {n:>4}/{t:<4} missed  {os.path.relpath(f)}  {g[:60]}\" for p, f, n, t, g in rows[:20])); rows[20:] and print(f\"... and {len(rows) - 20} more below 95%\"); print(f\"{len(ran) - len(rows)} changed file(s) at >= 95%; {len(files) - len(ran)} executed by no test.\")"
           ' bash
 
   # === Pre-Push Gates =========================================================
@@ -625,8 +667,8 @@ repos:
         # testmon selects. The workflow sets that variable per matrix job (from
         # `matrix_entries` in ops/github/precommit_matrix.py) and nothing sets it
         # locally, so a local pre-push selects and a sharded CI job does not,
-        # with no second switch to keep in step. ops/github/testmon_gate_test.py
-        # runs this shell both ways to prove it.
+        # with no second switch to keep in step. `testmon_gate_test.py` runs
+        # this shell both ways to prove it.
         #
         # Unquoted on purpose: it must word-split into flags.
         #
@@ -672,8 +714,6 @@ repos:
             fi;
             select=(); cov=(); sel=();
             has() { uv --quiet run --frozen --group pre-commit python -c "$1" 2>/dev/null; };
-            has "import ops.github.selected_nodeids_plugin" &&
-            sel=(-p ops.github.selected_nodeids_plugin);
             if [ -z "${PYTEST_FORCE_ALL:-}" ] && [ -z "$PYTEST_SPLIT_ARGS" ] && has "import testmon"; then
             select=(--testmon-forceselect);
             elif [ -n "${PYTEST_TESTMON_ARGS:-}" ]; then
@@ -708,8 +748,8 @@ repos:
         #
         # Tolerate exit 5 (nothing collected): a tree may ship no tests for this
         # marker. Not fail-open -- `pytest-global` above still fails on an empty
-        # collection, and ops/github/marker_tiers_test.py fails any tier that
-        # goes empty without being declared empty.
+        # collection, and `marker_tiers_test.py` fails any tier that goes empty
+        # without being declared empty.
         #
         # $PYTEST_SPLIT_ARGS is what makes this tier's four CI jobs distinct.
         # Omitting it was silent for four runs: the workflow set the variable,
@@ -728,8 +768,6 @@ repos:
             fi;
             select=(); cov=(); sel=();
             has() { uv --quiet run --frozen --group pre-commit python -c "$1" 2>/dev/null; };
-            has "import ops.github.selected_nodeids_plugin" &&
-            sel=(-p ops.github.selected_nodeids_plugin);
             if [ -z "${PYTEST_FORCE_ALL:-}" ] && [ -z "$PYTEST_SPLIT_ARGS" ] && { [ -n "${PYTEST_COLLECT_SELECTED:-}" ] || [ -z "${GITHUB_ACTIONS:-}" ]; } && has "import testmon"; then
             select=(--testmon-forceselect);
             elif [ -n "${PYTEST_TESTMON_ARGS:-}" ]; then
@@ -773,8 +811,6 @@ repos:
             fi;
             select=(); cov=(); sel=();
             has() { uv --quiet run --frozen --group pre-commit python -c "$1" 2>/dev/null; };
-            has "import ops.github.selected_nodeids_plugin" &&
-            sel=(-p ops.github.selected_nodeids_plugin);
             if [ -z "${PYTEST_FORCE_ALL:-}" ] && [ -z "$PYTEST_SPLIT_ARGS" ] && { [ -n "${PYTEST_COLLECT_SELECTED:-}" ] || [ -z "${GITHUB_ACTIONS:-}" ]; } && has "import testmon"; then
             select=(--testmon-forceselect);
             elif [ -n "${PYTEST_TESTMON_ARGS:-}" ]; then
@@ -828,8 +864,6 @@ repos:
             fi;
             select=(); cov=(); sel=();
             has() { uv --quiet run --frozen --group pre-commit python -c "$1" 2>/dev/null; };
-            has "import ops.github.selected_nodeids_plugin" &&
-            sel=(-p ops.github.selected_nodeids_plugin);
             if [ -z "${PYTEST_FORCE_ALL:-}" ] && [ -z "$PYTEST_SPLIT_ARGS" ] && { [ -n "${PYTEST_COLLECT_SELECTED:-}" ] || [ -z "${GITHUB_ACTIONS:-}" ]; } && has "import testmon"; then
             select=(--testmon-forceselect);
             elif [ -n "${PYTEST_TESTMON_ARGS:-}" ]; then

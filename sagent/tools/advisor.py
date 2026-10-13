@@ -15,9 +15,12 @@ and fully observable in the REPL.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final
 
 import logging
+
+from treekle import PlainTree, immutable
 
 from sagent.agent.agent import Agent, ObservedModel
 from sagent.agent.retry import (
@@ -28,7 +31,6 @@ from sagent.agent.retry import (
 )
 from sagent.agent.state import current_agent_var
 from sagent.lib import debug_log
-from sagent.lib.custom_json import JSON, json_freeze
 from sagent.types.model import (
     Model,
     ModelRequest,
@@ -80,7 +82,7 @@ class Advisor:
         " a non-obvious design decision. Include the situation, options"
         " considered, and the specific decision you need help with."
     )
-    directive_schema: JSON = json_freeze(
+    directive_schema: Mapping[str, PlainTree] = immutable(
         {
             "type": "object",
             "properties": {
@@ -168,7 +170,7 @@ class Advisor:
         )
         request = ModelRequest(
             messages=[UserMessage(text=prompt)],
-            system=self._system or None,
+            system=self._system,
         )
         try:
             response = await send_with_retry(

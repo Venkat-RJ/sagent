@@ -19,6 +19,8 @@ import logging
 import threading
 import time
 
+from treekle import PlainTree
+
 import httpx2
 import pytest
 
@@ -65,7 +67,6 @@ from sagent.agent.state import (
 )
 from sagent.compaction.summary import SummaryCompactor
 from sagent.lib import last_models, token_count
-from sagent.lib.custom_json import JSON
 from sagent.providers.lib.errors import PolicyBlockedError
 from sagent.tools.read import Read
 from sagent.types.capability import (
@@ -176,7 +177,7 @@ def _summary_override(
     summary: list[ModelContextEvent],
     mint_ref: Callable[[], TapeRef],
     *,
-    tape: Sequence[TapeRecord] | None = None,
+    tape: Sequence[TapeRecord] = (),
     strategy: str = "summary",
     fallback_reason: str = "",
     preserved_tail_count: int = 0,
@@ -381,7 +382,7 @@ async def test_observed_model_delegates_exact_token_measurement() -> None:
     assert await observed.actual_request_tokens(request) > 0
 
 
-_STUB_SCHEMA: JSON = {"type": "object"}
+_STUB_SCHEMA: Mapping[str, PlainTree] = {"type": "object"}
 
 
 @dataclass(slots=True, kw_only=True)
@@ -391,7 +392,9 @@ class StubTool:
     name: str = "Echo"
     tool_id: str = "application/x-tool-echo"
     description: str = "Echo tool."
-    directive_schema: JSON = field(default_factory=lambda: {"type": "object"})
+    directive_schema: Mapping[str, PlainTree] = field(
+        default_factory=lambda: {"type": "object"},
+    )
     clearable_results: bool = False
     response: str | None = None
     calls: list[Mapping[str, object]] = field(default_factory=list)
@@ -945,7 +948,6 @@ async def test_agent_request_tools_wrapped_in_background_aware() -> None:
         pass
     assert model.received
     req = model.received[-1]
-    assert req.tools is not None
     seen = req.tools[0]
     props = dict(cast(Mapping[str, object], seen.directive_schema["properties"]))
     assert "background" in props
@@ -971,12 +973,11 @@ async def test_a_tool_gate_limits_the_tools_a_request_offers_until_it_is_cleared
     async for _ in a.run(UserMessage(text="hi")):
         pass
     hidden = model.received[-1]
-    assert hidden.tools is None
+    assert not hidden.tools
     a.tool_gate = frozenset({"Echo"})
     async for _ in a.run(UserMessage(text="again")):
         pass
     shown = model.received[-1]
-    assert shown.tools is not None
     assert [offered.name for offered in shown.tools] == ["Echo"]
     a.tool_gate = None
     assert [tool.name for tool in a.live_tools()] == ["Echo"]
@@ -1226,7 +1227,9 @@ async def test_agent_run_waits_for_background_tool_result() -> None:
         name: str = "slow_echo"
         tool_id: str = "application/x-tool-slow-echo"
         description: str = "echoes after a brief async pause"
-        directive_schema: JSON = field(default_factory=lambda: {"type": "object"})
+        directive_schema: Mapping[str, PlainTree] = field(
+            default_factory=lambda: {"type": "object"},
+        )
         clearable_results: bool = False
 
         def summary(self, args: Mapping[str, object]) -> str:
@@ -1527,7 +1530,9 @@ async def test_background_result_lands_before_single_agent_idle() -> None:
         name: str = "slow_echo"
         tool_id: str = "application/x-tool-slow-echo"
         description: str = "echoes after a brief async pause"
-        directive_schema: JSON = field(default_factory=lambda: {"type": "object"})
+        directive_schema: Mapping[str, PlainTree] = field(
+            default_factory=lambda: {"type": "object"},
+        )
         clearable_results: bool = False
 
         def summary(self, args: Mapping[str, object]) -> str:
@@ -1806,7 +1811,6 @@ async def test_agent_run_passes_rich_tools_to_model() -> None:
         pass
     assert model.received, "model.stream must have been invoked"
     req = model.received[-1]
-    assert req.tools is not None
     assert len(req.tools) == 1
     seen = req.tools[0]
     # Every Tool-protocol attribute the providers read must resolve.
@@ -2485,7 +2489,7 @@ class _NoopCompactor:
         return _summary_override(
             [UserMessage(text="ok")],
             mint_ref,
-            tape=tape or None,
+            tape=tape,
         )
 
 
@@ -3837,7 +3841,9 @@ async def test_run_bg_propagates_external_cancellation() -> None:
         name: str = "blocker"
         tool_id: str = "application/x-tool-blocker"
         description: str = ""
-        directive_schema: JSON = field(default_factory=lambda: {"type": "object"})
+        directive_schema: Mapping[str, PlainTree] = field(
+            default_factory=lambda: {"type": "object"},
+        )
         clearable_results: bool = False
 
         def summary(self, args: Mapping[str, object]) -> str:
@@ -5461,7 +5467,7 @@ async def test_agent_compactor_scrunches_when_inner_output_still_oversized() -> 
             return _summary_override(
                 [UserMessage(text=payload_text)],
                 mint_ref,
-                tape=tape or None,
+                tape=tape,
             )
 
     @dataclass(slots=True, kw_only=True)
@@ -5555,7 +5561,7 @@ async def test_agent_compactor_scrunch_passes_record_cost() -> None:
             return _summary_override(
                 [UserMessage(text=payload_text)],
                 mint_ref,
-                tape=tape or None,
+                tape=tape,
             )
 
     @dataclass(slots=True, kw_only=True)
@@ -5721,7 +5727,7 @@ async def test_agent_compactor_repairs_payload_after_scrunch() -> None:
                 return _summary_override(
                     [UserMessage(text="X" * 5_000)],
                     mint_ref,
-                    tape=tape or None,
+                    tape=tape,
                 )
             # Scrunch passes: emit an AM with a tool_call but NO ToolResult.
             return _summary_override(
@@ -5732,7 +5738,7 @@ async def test_agent_compactor_repairs_payload_after_scrunch() -> None:
                     ),
                 ],
                 mint_ref,
-                tape=tape or None,
+                tape=tape,
             )
 
         def maintain(
@@ -5832,7 +5838,7 @@ async def test_agent_compactor_scrunch_uses_agent_budget_not_model_cap() -> None
             return _summary_override(
                 [UserMessage(text=payload_text)],
                 mint_ref,
-                tape=tape or None,
+                tape=tape,
             )
 
         def maintain(
@@ -5920,7 +5926,7 @@ async def test_agent_compactor_scrunch_target_subtracts_system_tool_overhead() -
 
         @override
         def approx_request_tokens(self, request: ModelRequest) -> int:
-            total = len(request.system or "") // 4
+            total = len(request.system) // 4
             for m in request.messages:
                 if isinstance(m, (UserMessage, AgentSendMessage)):
                     total += len(m.text) // 4
@@ -5960,7 +5966,7 @@ async def test_agent_compactor_scrunch_target_subtracts_system_tool_overhead() -
             return _summary_override(
                 [UserMessage(text=payload_text)],
                 mint_ref,
-                tape=tape or None,
+                tape=tape,
             )
 
     # System prompt of 800 chars -> 200 tokens of fixed overhead.
@@ -6046,7 +6052,7 @@ async def test_agent_compactor_skips_scrunch_when_inner_output_fits() -> None:
             return _summary_override(
                 [UserMessage(text="ok")],
                 mint_ref,
-                tape=tape or None,
+                tape=tape,
             )
 
     compactor = _NormalCompactor()
@@ -9954,7 +9960,9 @@ def test_background_aware_tool_rejects_non_object_schema() -> None:
 
     @dataclass(slots=True, kw_only=True)
     class StringSchemaTool(StubTool):
-        directive_schema: JSON = field(default_factory=lambda: {"type": "string"})
+        directive_schema: Mapping[str, PlainTree] = field(
+            default_factory=lambda: {"type": "string"},
+        )
 
     with pytest.raises(ValueError, match="object-typed"):
         _ = BackgroundAwareTool(StringSchemaTool())
@@ -9965,7 +9973,9 @@ def test_background_aware_tool_accepts_typeless_schema() -> None:
 
     @dataclass(slots=True, kw_only=True)
     class TypelessTool(StubTool):
-        directive_schema: JSON = field(default_factory=lambda: cast(JSON, {}))
+        directive_schema: Mapping[str, PlainTree] = field(
+            default_factory=lambda: cast(Mapping[str, PlainTree], {}),
+        )
 
     wrap = BackgroundAwareTool(TypelessTool())
     # Injection still happens; the wrapper's whole job depends on it.
@@ -10126,7 +10136,10 @@ async def test_serve_forever_rejects_a_concurrent_run() -> None:
 @pytest.mark.asyncio
 async def test_a_tool_owned_delay_reaches_the_tool() -> None:
     """A tool declaring ``delay`` keeps it; it is not a background request."""
-    schema: JSON = {"type": "object", "properties": {"delay": {"type": "integer"}}}
+    schema: Mapping[str, PlainTree] = {
+        "type": "object",
+        "properties": {"delay": {"type": "integer"}},
+    }
     tool = StubTool(directive_schema=schema)
     a = _build_agent(tools=[tool])
     assert "background" not in json.dumps(a.live_tools()[0].directive_schema)
@@ -10267,6 +10280,6 @@ async def test_the_driver_claim_clears_once_the_loop_exits() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

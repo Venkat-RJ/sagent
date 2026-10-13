@@ -13,7 +13,7 @@ from sagent.types.model import ModelRequest
 
 
 if TYPE_CHECKING:
-    from sagent.lib.custom_json import MutableJSON
+    from treekle import MutablePlainTree
 
 
 def test_minimax_from_key() -> None:
@@ -64,7 +64,10 @@ def test_minimax_base_url_override_via_from_key() -> None:
     assert p.base_url == "http://localhost:8000/v1"
 
 
-def _body(model_id: str, budget: ThinkingBudget | None = None) -> MutableJSON:
+def _body(
+    model_id: str,
+    budget: ThinkingBudget | None = None,
+) -> dict[str, MutablePlainTree]:
     m = cast(_MiniMaxModel, MiniMax.from_key("k").model(model_id))
     settings = ModelSettings.narrowest(m.capability)
     if budget is not None:
@@ -97,6 +100,6 @@ def test_m3_priority_tier_survives_the_transport() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

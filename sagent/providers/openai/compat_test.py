@@ -9,13 +9,14 @@ from typing import ClassVar, cast
 import json
 import logging
 
+from treekle import MutablePlainTree, from_plain
+
 import httpx2
 import pytest
 import tiktoken
 
 from sagent.catalog.openai import compatible
 from sagent.catalog.table import ModelCatalog, ModelTable
-from sagent.lib.custom_json import MutableJSON
 from sagent.providers.dashscope.api import DashScope
 from sagent.providers.lib.errors import error_status_code
 from sagent.providers.minimax.api import MiniMax
@@ -128,7 +129,7 @@ def _tiktoken_model() -> OpenAICompatModel:
 def _make_request(
     *,
     messages: list[ModelContextEvent],
-    system: str | None = None,
+    system: str = "",
 ) -> ModelRequest:
     return ModelRequest(messages=messages, system=system)
 
@@ -236,7 +237,7 @@ def test_reasoning_vendors_replay_reasoning_through_build_body(
         _make_request(messages=[UserMessage(text="q"), _reasoning_turn()]),
         stream=True,
     )
-    messages = cast(list[MutableJSON], body["messages"])
+    messages = from_plain(body["messages"], list[dict[str, MutablePlainTree]])
     assert messages[-1]["reasoning_content"] == "tu"
 
 
@@ -262,7 +263,7 @@ def test_extract_usage_reports_full_input_and_cache_read_separately() -> None:
     split (input minus cache) happens later in ``consume_stream`` -- see
     :func:`test_consume_stream_input_tokens_exclude_cache_read`.
     """
-    usage: MutableJSON = {
+    usage: dict[str, MutablePlainTree] = {
         "prompt_tokens": 1000,
         "completion_tokens": 100,
         "prompt_tokens_details": {"cached_tokens": 400},
@@ -282,7 +283,7 @@ async def test_consume_stream_input_tokens_exclude_cache_read() -> None:
     cache-inclusive ``prompt_tokens``, so the stored ``input_tokens`` must drop
     ``cached_tokens`` to stay disjoint from ``cache_read_tokens``.
     """
-    events: list[MutableJSON] = [
+    events: list[dict[str, MutablePlainTree]] = [
         {
             "id": "stream-1",
             "choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}],
@@ -297,7 +298,7 @@ async def test_consume_stream_input_tokens_exclude_cache_read() -> None:
         _sse_response(events),
         publish=None,
         model=_free_model(),
-        reasoning_field=None,
+        reasoning_field="",
     )
     assert resp.tokens.request == 600
     assert resp.tokens.cache_read == 400
@@ -305,7 +306,7 @@ async def test_consume_stream_input_tokens_exclude_cache_read() -> None:
 
 @pytest.mark.asyncio
 async def test_consume_stream_tracks_and_bills_cache_write_tokens() -> None:
-    events: list[MutableJSON] = [
+    events: list[dict[str, MutablePlainTree]] = [
         {
             "id": "stream-cache-write",
             "choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}],
@@ -323,7 +324,7 @@ async def test_consume_stream_tracks_and_bills_cache_write_tokens() -> None:
         _sse_response(events),
         publish=None,
         model=_billed_model(),
-        reasoning_field=None,
+        reasoning_field="",
     )
     assert resp.tokens.request == 3
     assert resp.tokens.cache_write == 1306
@@ -333,7 +334,7 @@ async def test_consume_stream_tracks_and_bills_cache_write_tokens() -> None:
     ) == pytest.approx((3 + 1306 * 1.25) / 1_000_000)
 
 
-def _sse_response(events: list[MutableJSON]) -> httpx2.Response:
+def _sse_response(events: list[dict[str, MutablePlainTree]]) -> httpx2.Response:
     """Build an in-memory httpx2 Response carrying SSE lines."""
     lines = [f"data: {json.dumps(e)}\n\n" for e in events]
     lines.append("data: [DONE]\n\n")
@@ -351,7 +352,7 @@ def _sse_response_body(body: bytes) -> httpx2.Response:
 
 @pytest.mark.asyncio
 async def test_consume_stream_text_and_usage() -> None:
-    events: list[MutableJSON] = [
+    events: list[dict[str, MutablePlainTree]] = [
         {
             "id": "stream-1",
             "choices": [{"delta": {"content": "he"}, "finish_reason": None}],
@@ -373,7 +374,7 @@ async def test_consume_stream_text_and_usage() -> None:
         r,
         publish=_sink,
         model=_free_model(),
-        reasoning_field=None,
+        reasoning_field="",
     )
     assert resp.message.text == "hello"
     assert "".join(text_acc) == "hello"
@@ -385,7 +386,7 @@ async def test_consume_stream_text_and_usage() -> None:
 
 @pytest.mark.asyncio
 async def test_consume_stream_preserves_chat_refusal_text() -> None:
-    events: list[MutableJSON] = [
+    events: list[dict[str, MutablePlainTree]] = [
         {
             "id": "stream-refusal",
             "choices": [
@@ -401,7 +402,7 @@ async def test_consume_stream_preserves_chat_refusal_text() -> None:
         _sse_response(events),
         publish=None,
         model=_free_model(),
-        reasoning_field=None,
+        reasoning_field="",
     )
     assert resp.message.text == "I can’t help with that."
     assert resp.stop_reason == "model_refusal"
@@ -409,7 +410,7 @@ async def test_consume_stream_preserves_chat_refusal_text() -> None:
 
 @pytest.mark.asyncio
 async def test_consume_stream_tool_call_accumulates() -> None:
-    events: list[MutableJSON] = [
+    events: list[dict[str, MutablePlainTree]] = [
         {
             "choices": [
                 {
@@ -455,7 +456,7 @@ async def test_consume_stream_tool_call_accumulates() -> None:
         _sse_response(events),
         publish=None,
         model=_free_model(),
-        reasoning_field=None,
+        reasoning_field="",
     )
     assert len(resp.message.tool_calls) == 1
     tc = resp.message.tool_calls[0]
@@ -467,7 +468,7 @@ async def test_consume_stream_tool_call_accumulates() -> None:
 
 @pytest.mark.asyncio
 async def test_consume_stream_reasoning_captured() -> None:
-    events: list[MutableJSON] = [
+    events: list[dict[str, MutablePlainTree]] = [
         {
             "choices": [
                 {
@@ -514,7 +515,7 @@ async def test_consume_stream_skips_malformed_data() -> None:
         _sse_response_body(body),
         publish=None,
         model=_free_model(),
-        reasoning_field=None,
+        reasoning_field="",
     )
     assert resp.message.text == "ok"
 
@@ -531,7 +532,7 @@ async def test_consume_stream_skips_well_formed_non_object_data(payload: bytes) 
         _sse_response_body(body),
         publish=None,
         model=_free_model(),
-        reasoning_field=None,
+        reasoning_field="",
     )
     assert resp.message.text == "ok"
 
@@ -546,7 +547,7 @@ async def test_consume_stream_skips_well_formed_non_object_data(payload: bytes) 
     ],
 )
 async def test_consume_stream_raises_an_in_band_error_event(
-    event: MutableJSON,
+    event: dict[str, MutablePlainTree],
     status: int | None,
 ) -> None:
     with pytest.raises(UserFacingError, match="boom") as raised:
@@ -554,7 +555,7 @@ async def test_consume_stream_raises_an_in_band_error_event(
             _sse_response([event]),
             publish=None,
             model=_free_model(),
-            reasoning_field=None,
+            reasoning_field="",
         )
     assert error_status_code(raised.value) == status
 
@@ -571,7 +572,7 @@ async def test_consume_stream_eof_without_done_raises_interrupted() -> None:
             _sse_response_body(body),
             publish=None,
             model=_billed_model(),
-            reasoning_field=None,
+            reasoning_field="",
         )
     response = exc_info.value.response
     assert response.message.text == "partial"
@@ -930,7 +931,7 @@ def test_build_body_stream_options_include_usage() -> None:
         stream=True,
     )
     assert body["stream"] is True
-    stream_options = cast(MutableJSON, body["stream_options"])
+    stream_options = cast(dict[str, MutablePlainTree], body["stream_options"])
     assert stream_options["include_usage"] is True
 
 
@@ -955,6 +956,6 @@ def test_build_body_skips_service_tier_when_not_supported() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

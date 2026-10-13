@@ -66,12 +66,13 @@ else:
     _starlette_routing = lazy_import("starlette.routing")
     uvicorn = lazy_import("uvicorn")
 
+from treekle import mutable
+
 from sagent.agent.background import (
     backgroundable,
     bg_augmented_schema,
     split_bg_args,
 )
-from sagent.lib.custom_json import json_unfreeze
 from sagent.lib.tool_validation import validate_tool_input
 from sagent.types.exceptions import log_task_exception
 from sagent.types.runtime import RuntimeEvent, ToolLabel, ToolResult
@@ -421,7 +422,7 @@ class ToolsBridge:
                 mcp_types.Tool(
                     name=t.name,
                     description=t.description,
-                    input_schema=json_unfreeze(
+                    input_schema=mutable(
                         bg_augmented_schema(t.directive_schema)
                         if backgroundable(t)
                         else t.directive_schema,

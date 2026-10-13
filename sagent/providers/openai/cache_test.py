@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING
 
 import json
 
+from treekle import from_plain, json_loads
+
 import httpx2
 import pytest
 
 from sagent.agent.agent import Agent
 from sagent.compaction.summary import SummaryCompactor
-from sagent.lib.custom_json import convert, parse
 from sagent.providers.openai.api import OpenAI
 from sagent.tools.bash import Bash
 from sagent.types.runtime import (
@@ -100,12 +101,12 @@ async def test_compacting_agent_preserves_prefix_past_half_window(
     finally:
         await provider.close_sdk()
     assert len(capture.payloads) > 3
-    bodies = [parse(raw, dict[str, object]) for raw in capture.payloads]
+    bodies = [json_loads(raw, dict[str, object]) for raw in capture.payloads]
     for before, after in pairwise(bodies):
         if after["store"] is False:
             continue
         assert _prefix_items(before, after=after) == len(
-            convert(before["input"], list[dict[str, object]]),
+            from_plain(before["input"], list[dict[str, object]]),
         )
         assert (
             json.dumps(before["tools"]).encode() == json.dumps(after["tools"]).encode()
@@ -136,8 +137,8 @@ class _Capture:
 
 
 def _prefix_items(before: Mapping[str, object], *, after: Mapping[str, object]) -> int:
-    old_items = convert(before["input"], list[dict[str, object]])
-    new_items = convert(after["input"], list[dict[str, object]])
+    old_items = from_plain(before["input"], list[dict[str, object]])
+    new_items = from_plain(after["input"], list[dict[str, object]])
     for index, (old, new) in enumerate(zip(old_items, new_items, strict=False)):
         if json.dumps(old).encode() != json.dumps(new).encode():
             return index
@@ -145,6 +146,6 @@ def _prefix_items(before: Mapping[str, object], *, after: Mapping[str, object]) 
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

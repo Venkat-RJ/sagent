@@ -11,7 +11,7 @@ first-class runtime events; the agent's loop handles them in turn.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from functools import partial
 from types import MappingProxyType
@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import asyncio
 import dataclasses
+
+from treekle import PlainTree, immutable
 
 from sagent.agent.agent import ModelChange
 from sagent.agent.state import (
@@ -31,7 +33,6 @@ from sagent.catalog.table import (
     UnsupportedTagError,
     base_model_id,
 )
-from sagent.lib.custom_json import JSON, json_freeze
 from sagent.providers.providers import (
     PROVIDER_NAMES,
     infer_provider,
@@ -115,7 +116,7 @@ class AgentSelf:
     tool_id: str = "application/x-tool-agentself"
     clearable_results: bool = False
     description: str = load_tool_description("agentself")
-    directive_schema: JSON = json_freeze(
+    directive_schema: Mapping[str, PlainTree] = immutable(
         {
             "type": "object",
             "properties": {
@@ -617,7 +618,7 @@ def _commit_context(agent: AgentSelfAgent, context: str, prompt: str) -> None:
 
 
 def _do_diagnostics(
-    changes: list[str] | None = None,
+    changes: Sequence[str] = (),
     d: Mapping[str, object] | None = None,
 ) -> ToolResult:
     """Return current agent diagnostics."""
@@ -1020,7 +1021,7 @@ def _plan_model(
         return ToolResult(call_id="", content="account cannot be empty.", is_error=True)
     # Infer only when the caller named no provider: an explicit provider, even
     # the current one, is a choice inference must not override.
-    if model_id and provider is None:
+    if model_id is not None and provider is None:
         inferred = infer_provider(model_id, spec.provider)
         if inferred is not None:
             provider, inferred_auth = inferred

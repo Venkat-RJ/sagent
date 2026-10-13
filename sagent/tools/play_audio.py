@@ -16,6 +16,7 @@ agent shouldn't fail a model request because the host can't beep.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,8 +26,9 @@ import platform
 import shutil
 import subprocess
 
+from treekle import PlainTree, immutable
+
 from sagent.agent.state import get_tool_state
-from sagent.lib.custom_json import JSON, json_freeze
 from sagent.tools.core import load_tool_description, run_sync
 from sagent.types.runtime import ToolResult
 
@@ -45,7 +47,7 @@ class PlayAudio:
     tool_id: str = "application/x-tool-playaudio"
     clearable_results: bool = True
     description: str = load_tool_description("PlayAudio")
-    directive_schema: JSON = json_freeze(
+    directive_schema: Mapping[str, PlainTree] = immutable(
         {
             "type": "object",
             "properties": {

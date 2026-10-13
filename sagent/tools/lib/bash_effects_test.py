@@ -195,7 +195,7 @@ def _mutates(command: str) -> bool:
 def _skip_if_missing(command: str) -> None:
     """Skip when the utility under test is not installed."""
     exe = command.split(maxsplit=1)[0]
-    if exe in ("for", "while", "echo", "cat") or shutil.which(exe):
+    if exe in ("for", "while", "echo", "cat") or shutil.which(exe) is not None:
         return
     pytest.skip(f"{exe} not available")
 
@@ -282,6 +282,6 @@ def test_a_command_that_executes_is_never_classified_read_only(
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

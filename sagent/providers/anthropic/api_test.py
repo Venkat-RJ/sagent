@@ -11,12 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import json
 import operator
 
+from treekle import from_plain
+
 import httpx2
 import pytest
 
 from sagent.agent.retry import error_status, is_retryable
 from sagent.bin.cli import DEFAULT_TOOLS, resolve_tools
-from sagent.lib.custom_json import convert
 from sagent.providers.anthropic.api import (
     Anthropic,
     _AnthropicModel,
@@ -64,10 +65,10 @@ from sagent.types.runtime import (
 
 if TYPE_CHECKING:
     from anthropic.types import MessageParam
+    from treekle import MutablePlainTree
 
     import anthropic as anthropic_sdk
 
-    from sagent.lib.custom_json import MutableJSON
     from sagent.types.capability import ThinkingBudget, ThinkingOutput
     from sagent.types.tools import Tool
 
@@ -935,9 +936,9 @@ def test_anthropic_build_kwargs_enabled_thinking_respects_max_tokens_cap() -> No
     m = p.model("claude-opus-4-6")
     m._settings = replace(m.settings, thinking_budget="fixed")
     kwargs = m._build_kwargs(ModelRequest(messages=[UserMessage(text="x")]), [])
-    max_tokens = convert(kwargs["max_tokens"], int)
+    max_tokens = from_plain(kwargs["max_tokens"], int)
     thinking = cast(dict[str, object], kwargs["thinking"])
-    budget = convert(thinking["budget_tokens"], int)
+    budget = from_plain(thinking["budget_tokens"], int)
     assert max_tokens <= m.limits.max_response_tokens
     assert budget < max_tokens
 
@@ -951,9 +952,9 @@ def test_anthropic_build_kwargs_fixed_thinking_budget_meets_api_floor() -> None:
         [],
     )
     thinking = cast(dict[str, object], kwargs["thinking"])
-    budget = convert(thinking["budget_tokens"], int)
+    budget = from_plain(thinking["budget_tokens"], int)
     assert budget >= 1024
-    assert budget < convert(kwargs["max_tokens"], int)
+    assert budget < from_plain(kwargs["max_tokens"], int)
 
 
 def test_anthropic_thinking_axes_opus_4_6() -> None:
@@ -1652,10 +1653,7 @@ def test_build_kwargs_no_context_management_by_default() -> None:
     model = p.model("claude-opus-4-7")
     req = ModelRequest(messages=[UserMessage(text="hi")], system="s")
     msgs: list[MessageParam] = [
-        cast(
-            MessageParam,
-            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-        ),
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]},
     ]
     kwargs = model._build_kwargs(req, msgs)
     body = kwargs.get("extra_body")
@@ -1669,14 +1667,10 @@ def test_build_kwargs_includes_context_management_when_opted_in() -> None:
     req = ModelRequest(
         messages=[UserMessage(text="hi")],
         system="s",
-        tools=None,
         max_response_tokens=128_000,
     )
     msgs: list[MessageParam] = [
-        cast(
-            MessageParam,
-            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-        ),
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]},
     ]
     kwargs = model._build_kwargs(req, msgs)
     body = cast(dict[str, object], kwargs["extra_body"])
@@ -1706,10 +1700,7 @@ def test_build_kwargs_context_management_trigger_scales_with_context_window() ->
     p = Anthropic.from_key("k", server_side_context_management=True)
     req = ModelRequest(messages=[UserMessage(text="hi")], system="s")
     msgs: list[MessageParam] = [
-        cast(
-            MessageParam,
-            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-        ),
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]},
     ]
 
     m200 = p.model("claude-opus-4-7+200k")
@@ -1742,7 +1733,7 @@ def test_build_kwargs_preserves_provider_context_management() -> None:
     """
     # Custom config that mimics what a subclass builds when
     # ``USE_API_CLEAR_TOOL_RESULTS`` is set + thinking is on.
-    custom_cm: MutableJSON = {
+    custom_cm: dict[str, MutablePlainTree] = {
         "edits": [
             {"type": "clear_thinking_20251015", "keep": "all"},
             {
@@ -1764,7 +1755,7 @@ def test_build_kwargs_preserves_provider_context_management() -> None:
             cache_cold: bool,
             trigger_tokens: int,
             tools: Sequence[Tool],
-        ) -> MutableJSON | None:
+        ) -> dict[str, MutablePlainTree] | None:
             del has_thinking, cache_cold, trigger_tokens, tools
             return {"context_management": custom_cm}
 
@@ -1774,10 +1765,7 @@ def test_build_kwargs_preserves_provider_context_management() -> None:
     model = p.model("claude-opus-4-7")
     req = ModelRequest(messages=[UserMessage(text="hi")], system="s")
     msgs: list[MessageParam] = [
-        cast(
-            MessageParam,
-            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-        ),
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]},
     ]
     kwargs = model._build_kwargs(req, msgs)
     body = cast(dict[str, object], kwargs["extra_body"])
@@ -1798,9 +1786,9 @@ def test_anthropic_provider_build_system_passthrough() -> None:
     assert p.build_system("hello") == "hello"
 
 
-def test_anthropic_provider_build_system_none_returns_not_given() -> None:
+def test_anthropic_provider_build_system_empty_returns_not_given() -> None:
     p = Anthropic.from_key("k")
-    out = p.build_system(None)
+    out = p.build_system("")
     # ``anthropic.NOT_GIVEN`` is a sentinel; type is anthropic.NotGiven.
     assert out is anthropic_sdk.NOT_GIVEN
 
@@ -1812,6 +1800,6 @@ def test_anthropic_model_max_response_tokens_from_profile() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

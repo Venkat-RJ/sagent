@@ -19,6 +19,8 @@ import logging
 import threading
 import time
 
+from treekle import PlainTree
+
 import httpx2
 import pytest
 
@@ -65,7 +67,6 @@ from sagent.agent.state import (
 )
 from sagent.compaction.summary import SummaryCompactor
 from sagent.lib import last_models, token_count
-from sagent.lib.codec import PlainTree
 from sagent.providers.lib.errors import PolicyBlockedError
 from sagent.tools.read import Read
 from sagent.types.capability import (
@@ -10279,6 +10280,6 @@ async def test_the_driver_claim_clears_once_the_loop_exits() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

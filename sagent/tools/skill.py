@@ -1,8 +1,8 @@
 """Skills: user-authored prompt snippets the agent can invoke.
 
-- Discovery: ``~/.sagent/skills/<name>/SKILL.md`` (user-global) and
-  ``<cwd>/{.sagent,.claude,.agents}/skills/<name>/SKILL.md``
-  (project-local).
+- Discovery: ``data_dir() / "rekursiv-ai" / "sagent" / "skills"``
+  (user-global, through ``sagent.lib.userdirs``) and
+  ``<cwd>/{.sagent,.claude,.agents}/skills/<name>/SKILL.md`` (project-local).
 - Frontmatter (YAML) fields honored: ``name``, ``description``.
   (``allowed-tools`` / ``user-invocable`` / ``paths`` parsed but not
   enforced yet; all discovered skills are surfaced to the model.)
@@ -24,8 +24,9 @@ import dataclasses
 import logging
 import re
 
+from treekle import PlainTree, immutable
+
 from sagent.agent.state import ToolState, get_tool_state
-from sagent.lib.codec import PlainTree, immutable
 from sagent.lib.dotsagent import parse_frontmatter, walk_up
 from sagent.lib.userdirs import data_dir
 from sagent.tools.core import load_tool_description

@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING, cast
 
 import logging
 
+from treekle import MutablePlainTree, PlainTree, from_plain, json_loads
+
 import httpx2
 import pytest
 
-from sagent.lib.codec import MutablePlainTree, PlainTree, from_plain, loads
 from sagent.providers.google.api import (
     Google,
     _build_request,
@@ -758,7 +759,7 @@ async def test_google_actual_request_tokens_wraps_generate_request() -> None:
     )
     assert n == 314
     assert seen[0].url.path.endswith(":countTokens")
-    body = from_plain(loads(seen[0].content), dict[str, object])
+    body = json_loads(seen[0].content, dict[str, object])
     assert set(body) == {"generateContentRequest"}
     inner = from_plain(body["generateContentRequest"], dict[str, object])
     model_id = m.capability.wire_model_id or m.capability.model_id
@@ -926,6 +927,6 @@ def test_build_request_tool_result_carries_no_signature() -> None:
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

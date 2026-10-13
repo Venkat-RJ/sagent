@@ -11,6 +11,8 @@ import inspect
 import json
 import logging
 
+from treekle import from_plain, json_loads, mutable
+
 from sagent.catalog.openai import (
     keeps_reasoning_across_turns,
     reasoning_effort,
@@ -18,7 +20,6 @@ from sagent.catalog.openai import (
 )
 from sagent.catalog.table import base_model_id
 from sagent.lib import debug_log
-from sagent.lib.codec import from_plain, loads, mutable
 from sagent.providers.lib.errors import (
     StreamingResponseNotReadError,
     error_status_code,
@@ -852,7 +853,7 @@ def _parse_tool_arguments(
             continue
         saw_args = True
         try:
-            parsed = from_plain(loads(args_str), dict[str, object])
+            parsed = json_loads(args_str, dict[str, object])
         except json.JSONDecodeError:
             logger.warning(
                 "OpenAI Responses tool arguments were invalid JSON: "

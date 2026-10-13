@@ -47,7 +47,7 @@ from sagent.types.runtime import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from sagent.lib.codec import MutablePlainTree
+    from treekle import MutablePlainTree
 
 
 _CRED_PAYLOAD: dict[str, object] = {
@@ -1114,6 +1114,6 @@ def test_writeback_credentials_works_across_event_loops(
 
 
 if __name__ == "__main__":
-    from sagent.lib.testing.main import test_main
+    from sagent.lib.testing.runner import test_main
 
     test_main(__file__)

@@ -23,19 +23,19 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final, cast
 
 import asyncio
-import json
 import os
 
-from wesearch.fetch import ContentParams, RequestParams, RetryParams, fetch
-from wesearch.types.errors import FetchError
-
-from sagent.lib.codec import (
+from treekle import (
     MutablePlainTree,
     PlainTree,
     ReadError,
     from_plain,
     immutable,
+    json_loads,
 )
+from wesearch.fetch import ContentParams, RequestParams, RetryParams, fetch
+from wesearch.types.errors import FetchError
+
 from sagent.tools.core import load_tool_description
 from sagent.types.runtime import ToolResult
 
@@ -485,13 +485,12 @@ async def _gql(
             content=(f"Linear API HTTP {e.status}: {e.body.decode(errors='replace')}"),
             is_error=True,
         )
-    document = json.loads(raw[0])
     try:
-        body = from_plain(document, dict[str, object])
+        body = json_loads(raw[0], dict[str, object])
     except ReadError:
         return ToolResult(
             call_id="",
-            content=f"Linear GraphQL returned a non-object body: {document}",
+            content=f"Linear GraphQL returned a non-object body: {json_loads(raw[0])}",
             is_error=True,
         )
     if errors := body.get("errors"):

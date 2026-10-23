@@ -84,7 +84,11 @@ def test_resume_keeps_transcript_prominent() -> None:
 def test_welcome_without_configuration_has_identity_and_help() -> None:
     stream = io.StringIO()
     console = Console(
-        file=stream, force_terminal=True, width=80, height=24, record=True
+        file=stream,
+        force_terminal=True,
+        width=80,
+        height=24,
+        record=True,
     )
     render_welcome(console, folder=Path("/research"))
     text = console.export_text(styles=False)
@@ -280,7 +284,9 @@ def test_environment_can_disable_startup_animation(
 
     monkeypatch.setattr(welcome, "render_welcome", capture)
     welcome.print_welcome(
-        model="test-model", provider="TestProvider", folder=Path("/research")
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
     )
     assert calls == [True]
 
@@ -317,10 +323,17 @@ def test_terminal_width_border_contains_identity_commands_with_greeting_outside(
 ) -> None:
     stream = io.StringIO()
     console = Console(
-        file=stream, force_terminal=True, record=True, width=width, height=24
+        file=stream,
+        force_terminal=True,
+        record=True,
+        width=width,
+        height=24,
     )
     render_welcome(
-        console, model="test-model", provider="TestProvider", folder=Path("/research")
+        console,
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
     )
     plain = console.export_text(styles=False)
     lines = plain.splitlines()
@@ -359,10 +372,17 @@ def test_ascii_border_preserves_encoding() -> None:
 def test_icon_is_left_of_wordmark_without_extra_brand_text() -> None:
     stream = io.StringIO()
     console = Console(
-        file=stream, force_terminal=True, record=True, width=80, height=24
+        file=stream,
+        force_terminal=True,
+        record=True,
+        width=80,
+        height=24,
     )
     render_welcome(
-        console, model="test-model", provider="TestProvider", folder=Path("/research")
+        console,
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
     )
     plain = console.export_text(styles=False)
     assert "rekursiv.ai" not in plain
@@ -449,10 +469,17 @@ def test_identity_keeps_a_rectangular_cell_grid(phase: int | None) -> None:
 def test_frame_has_equal_top_and_bottom_breathing_room() -> None:
     stream = io.StringIO()
     console = Console(
-        file=stream, force_terminal=True, record=True, width=80, height=24
+        file=stream,
+        force_terminal=True,
+        record=True,
+        width=80,
+        height=24,
     )
     render_welcome(
-        console, model="test-model", provider="TestProvider", folder=Path("/research")
+        console,
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
     )
     lines = console.export_text(styles=False).splitlines()
     top = next(i for i, line in enumerate(lines) if line.startswith("╭"))
@@ -464,10 +491,17 @@ def test_frame_has_equal_top_and_bottom_breathing_room() -> None:
 def test_command_descriptions_stay_with_their_command(width: int) -> None:
     stream = io.StringIO()
     console = Console(
-        file=stream, force_terminal=True, record=True, width=width, height=24
+        file=stream,
+        force_terminal=True,
+        record=True,
+        width=width,
+        height=24,
     )
     render_welcome(
-        console, model="test-model", provider="TestProvider", folder=Path("/research")
+        console,
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
     )
     plain = console.export_text(styles=False)
     lines = plain.splitlines()
@@ -486,10 +520,17 @@ def test_command_descriptions_stay_with_their_command(width: int) -> None:
 def test_wrapped_greeting_keeps_the_content_left_edge() -> None:
     stream = io.StringIO()
     console = Console(
-        file=stream, force_terminal=True, record=True, width=40, height=24
+        file=stream,
+        force_terminal=True,
+        record=True,
+        width=40,
+        height=24,
     )
     render_welcome(
-        console, model="test-model", provider="TestProvider", folder=Path("/research")
+        console,
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
     )
     lines = console.export_text(styles=False).splitlines()
     greeting_start = next(

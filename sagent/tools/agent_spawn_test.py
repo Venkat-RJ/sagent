@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Final, TypedDict, override
+from typing import TYPE_CHECKING, Final, override
+from typing_extensions import TypedDict
 from unittest.mock import MagicMock, patch
 
 import asyncio
@@ -79,7 +80,7 @@ if TYPE_CHECKING:
 _AGENT_SPAWN_LOGGER = agent_spawn.__name__
 
 
-class _SpawnScope(TypedDict):
+class _SpawnScope(TypedDict, closed=True):
     child_path: str
     eff_max_depth: int | None
 
@@ -2542,6 +2543,49 @@ async def test_child_provider_is_closed_when_the_child_exits() -> None:
     for _ in range(5):
         await asyncio.sleep(0)
     assert built.closes == 1
+
+
+@dataclass(slots=True, kw_only=True)
+class _OneAuthBuilder:
+    """A host's provider hook: builds ``built`` for ``auth`` and refuses any other."""
+
+    auth: str
+    built: _CountingProvider
+    asked: list[tuple[str, str, str | None]] = field(
+        default_factory=list[tuple[str, str, str | None]],
+    )
+
+    def __call__(self, provider: str, auth: str, account: str | None) -> Provider:
+        self.asked.append((provider, auth, account))
+        if auth != self.auth:
+            raise ValueError(f"only {self.auth}")
+        return self.built
+
+
+@pytest.mark.asyncio
+async def test_a_provider_hook_builds_each_child_or_refuses_it() -> None:
+    hook = _OneAuthBuilder(auth="plan", built=_CountingProvider())
+    parent = Agent(
+        model=StubProviderModel(responses=[AssistantMessage(text="root")]),
+        tools=[],
+        model_recipe=ModelRecipe(provider="StubP", auth="plan", model_id="stub"),
+    )
+    spawn = AgentSpawn(allow_providers=(), build_provider=hook)
+    with (
+        patch(
+            "sagent.providers.providers.build_provider",
+            side_effect=AssertionError("the registry built a child's provider"),
+        ),
+        _parent_context(parent),
+    ):
+        ran = await spawn.run({"prompt": "p"})
+        refused = await spawn.run({"prompt": "p", "auth": "credentials"})
+    assert (ran.is_error, ran.content) == (False, "child")
+    assert (refused.is_error, refused.content) == (
+        True,
+        "Failed to build model 'stub': only plan",
+    )
+    assert hook.asked == [("StubP", "plan", None), ("StubP", "credentials", None)]
 
 
 @pytest.mark.asyncio

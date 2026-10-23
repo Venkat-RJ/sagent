@@ -110,7 +110,11 @@ def render_welcome(
 
     def framed_rows(rows: list[Text]) -> list[Text]:
         return _frame_rows(
-            console, rows, width=frame_width, framed=framed, unicode_ok=unicode_ok
+            console,
+            rows,
+            width=frame_width,
+            framed=framed,
+            unicode_ok=unicode_ok,
         )
 
     def print_rows(rows: list[Text]) -> None:
@@ -136,7 +140,8 @@ def render_welcome(
                 for _lap in range(2):
                     for phase in range(len(_LOOP)):
                         live.update(
-                            Group(*framed_rows(_banner_rows(phase))), refresh=True
+                            Group(*framed_rows(_banner_rows(phase))),
+                            refresh=True,
                         )
                         time.sleep(0.014)
                 live.update(Group(*framed_rows(_banner_rows())), refresh=True)
@@ -155,7 +160,10 @@ def render_welcome(
     content_width = frame_width - (2 * (_FRAME_PADDING + 1) if framed else 2)
     value_width = max(1, content_width - 10)
     display_folder = _folder_label(
-        folder, home=home, width=value_width, unicode_ok=unicode_ok
+        folder,
+        home=home,
+        width=value_width,
+        unicode_ok=unicode_ok,
     )
     display_provider = {
         "OpenAISubscription": "OpenAI Subscription",

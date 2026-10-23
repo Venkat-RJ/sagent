@@ -4,6 +4,9 @@ Native macOS Terminal captures from 2026-10-10. These are actual CLI output,
 not mockups or transcript renders. No pixels were retouched. Captures exclude
 the title bar. Static screenshots show the final state, not animation.
 
+Three PNG files were recompressed losslessly on 2026-10-23 to meet the
+repository's file-size limit. Their decoded image data is unchanged.
+
 | Image | Source revision | Behavior |
 | --- | --- | --- |
 | [Before](before.png) | `e58865992aa22a7766b8d62a19ff3654dbd31bfd` | Untouched upstream startup. |

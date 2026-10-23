@@ -6,6 +6,7 @@ All tests stub the Slack SDK -- no network calls.
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +15,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import time
 
@@ -811,11 +813,11 @@ class TestRenderEvent:
         # ``AssistantMessage`` isn't in the ``RuntimeEvent`` union but the
         # renderer accepts it for the cases where the agent runtime
         # publishes assistant messages as part of an observer fanout.
-        ev: RuntimeEvent = AssistantMessage(text="hello")  # ty: ignore[invalid-assignment] -- The fixture uses a runtime event outside the narrow static union.  # pyright: ignore[reportAssignmentType] -- The fixture uses a runtime event outside the narrow static union.
+        ev: RuntimeEvent = AssistantMessage(text="hello")  # ty: ignore[invalid-assignment] -- The fixture uses a runtime event outside the narrow static union.  # pyright: ignore[reportAssignmentType] -- The fixture uses a runtime event outside the narrow static union.  # pyrefly: ignore[bad-assignment] -- The fixture uses a runtime event outside the narrow static union.
         assert _render_event(ev) == "hello"
 
     def test_assistant_message_empty(self) -> None:
-        ev: RuntimeEvent = AssistantMessage(text="   ")  # ty: ignore[invalid-assignment] -- The fixture uses a runtime event outside the narrow static union.  # pyright: ignore[reportAssignmentType] -- The fixture uses a runtime event outside the narrow static union.
+        ev: RuntimeEvent = AssistantMessage(text="   ")  # ty: ignore[invalid-assignment] -- The fixture uses a runtime event outside the narrow static union.  # pyright: ignore[reportAssignmentType] -- The fixture uses a runtime event outside the narrow static union.  # pyrefly: ignore[bad-assignment] -- The fixture uses a runtime event outside the narrow static union.
         assert _render_event(ev) is None
 
     def test_tool_result_with_hint(self) -> None:
@@ -1060,7 +1062,7 @@ class TestHandle:
         req = MagicMock()
         req.type = "events_api"
         req.envelope_id = "env1"
-        req.payload = {}
+        req.payload = dict[str, object]()
         await adapter._handle(
             cast(AsyncBaseSocketModeClient, client),
             cast(SocketModeRequest, req),
@@ -1097,33 +1099,53 @@ class TestEnsureLogChannel:
     @pytest.mark.anyio
     async def test_creates_new(self) -> None:
         adapter, _ = _make_adapter()
-        with patch.object(
-            Slack,
-            "create_channel",
-            new=AsyncMock(return_value="id=C_NEW"),
+        create = AsyncMock(return_value="id=C_NEW")
+        sync = AsyncMock()
+        with (
+            patch.object(Slack, "create_channel", new=create),
+            patch.object(SlackAdapter, "_sync_members", new=sync),
         ):
             cid = await adapter.ensure_log_channel("sara")
         assert cid == "C_NEW"
+        create.assert_awaited_once_with("sara-log")
+        assert adapter._log_channels["sara-log"] == "C_NEW"
         assert adapter._log_channel_owners["C_NEW"] == "sara"
+        sync.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_creates_with_the_bot_token(self) -> None:
+        adapter, _ = _make_adapter()
+        tokens: list[str] = []
+
+        async def _create(slack: Slack, name: str) -> str:
+            del name
+            tokens.append(slack._token)
+            return "id=C_NEW"
+
+        with patch.object(Slack, "create_channel", new=_create):
+            await adapter.ensure_log_channel("sara")
+        assert tokens == [adapter._bot_token]
 
     @pytest.mark.anyio
     async def test_falls_back_to_find_when_create_fails(self) -> None:
         adapter, _ = _make_adapter()
         err = ToolResult(call_id="", content="exists", is_error=True)
+        find = AsyncMock(return_value="C_FOUND")
         with (
             patch.object(Slack, "create_channel", new=AsyncMock(return_value=err)),
-            patch.object(
-                SlackAdapter,
-                "_find_channel",
-                new=AsyncMock(return_value="C_FOUND"),
-            ),
+            patch.object(SlackAdapter, "_find_channel", new=find),
         ):
             cid = await adapter.ensure_log_channel("sara")
         assert cid == "C_FOUND"
+        find.assert_awaited_once_with("sara-log")
+        assert adapter._log_channels["sara-log"] == "C_FOUND"
         assert adapter._log_channel_owners["C_FOUND"] == "sara"
 
     @pytest.mark.anyio
-    async def test_returns_none_when_unfindable(self) -> None:
+    async def test_returns_none_when_unfindable(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         adapter, _ = _make_adapter()
         err = ToolResult(call_id="", content="exists", is_error=True)
         with (
@@ -1133,9 +1155,12 @@ class TestEnsureLogChannel:
                 "_find_channel",
                 new=AsyncMock(return_value=None),
             ),
+            caplog.at_level(logging.WARNING),
         ):
             cid = await adapter.ensure_log_channel("sara")
         assert cid is None
+        assert "sara-log" not in adapter._log_channels
+        assert caplog.messages == ["Failed to create/find #sara-log: exists"]
 
     @pytest.mark.anyio
     async def test_unexpected_create_response_returns_none(self) -> None:
@@ -1158,7 +1183,7 @@ class TestEnsureLogChannel:
         ):
             cid = await adapter.ensure_log_channel("sara", source_channel="C_SRC")
         assert cid == "C_NEW"
-        sync_mock.assert_awaited_once()
+        sync_mock.assert_awaited_once_with("C_SRC", "C_NEW")
 
 
 class TestFindChannel:
@@ -1508,7 +1533,7 @@ class TestAdapterConstruction:
 
         fake_child.serve_forever = _serve
         fake_child.shutdown = MagicMock()
-        fake_child.runtime.observers = []
+        fake_child.runtime.observers = list[Callable[[RuntimeEvent], None]]()
 
         with (
             patch(

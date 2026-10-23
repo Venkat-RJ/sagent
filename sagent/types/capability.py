@@ -45,7 +45,7 @@ type ThinkingBudget = Literal["none", "auto", "fixed"]
 
 type ThinkingOutput = Literal["none", "text", "redacted"]
 
-type ContextTag = Literal["", "+200k", "+272k", "+1m"]
+type ContextTag = Literal["", "+200k", "+272k", "+1m", "+max", "+min"]
 
 type SummaryKind = Literal["none", "auto", "concise", "detailed"]
 
@@ -444,7 +444,7 @@ def _reject_unoffered(capability: ModelCapability, name: str, value: object) -> 
 
 def _ladder[T](alias: object) -> tuple[T, ...]:
     """Return the Literal's members, in declaration order -- least committing first."""
-    underlying: object = cast(TypeAliasType, alias).__value__  # pyright: ignore[reportAny] -- PEP 695 aliases expose their target through __value__.
+    underlying: object = cast(TypeAliasType, alias).__value__
     return cast(tuple[T, ...], get_args(underlying))
 
 

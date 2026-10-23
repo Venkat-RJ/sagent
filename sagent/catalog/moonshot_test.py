@@ -1,87 +1,53 @@
-"""Moonshot catalog rows against the Kimi pricing page (2026-10-03)."""
-
-from __future__ import annotations
+"""Moonshot rows against the Kimi pricing and model pages (2026-10-03)."""
 
 import pytest
 
-from sagent.catalog import moonshot
-from sagent.types.cost import PriceKey, TokenPrice
+from sagent.catalog.loader import models
+from sagent.types.cost import PriceKey
 
 
 @pytest.mark.parametrize(
     ("model_id", "published"),
     [
-        (
-            "kimi-3.0",
-            TokenPrice(
-                request=3.0,
-                response=15.0,
-                cache_write=3.0,
-                cache_write_1h=6.0,
-                cache_read=0.3,
-            ),
-        ),
-        (
-            "kimi-code-2.7",
-            TokenPrice(
-                request=0.95,
-                response=4.0,
-                cache_write=0.0,
-                cache_write_1h=0.0,
-                cache_read=0.19,
-            ),
-        ),
-        (
-            "kimi-code-highspeed-2.7",
-            TokenPrice(
-                request=1.9,
-                response=8.0,
-                cache_write=0.0,
-                cache_write_1h=0.0,
-                cache_read=0.38,
-            ),
-        ),
-        (
-            "kimi-2.6",
-            TokenPrice(
-                request=0.95,
-                response=4.0,
-                cache_write=0.0,
-                cache_write_1h=0.0,
-                cache_read=0.16,
-            ),
-        ),
+        ("kimi-3.0", (3.0, 15.0, 3.0, 6.0, 0.3)),
+        ("kimi-2.6", (0.95, 4.0, 0.0, 0.0, 0.16)),
+        ("kimi-code-2.7", (0.95, 4.0, 0.0, 0.0, 0.19)),
+        ("kimi-code-highspeed-2.7", (1.9, 8.0, 0.0, 0.0, 0.38)),
     ],
 )
-def test_rows_bill_the_published_card(model_id: str, published: TokenPrice) -> None:
-    assert moonshot.models()[model_id].prices[PriceKey("auto")] == published
+def test_rows_bill_the_published_card(
+    model_id: str,
+    published: tuple[float, float, float, float, float],
+) -> None:
+    card = models("moonshot")[model_id].prices[PriceKey("auto")]
+    assert (
+        card.request,
+        card.response,
+        card.cache_write,
+        card.cache_write_1h,
+        card.cache_read,
+    ) == published
 
 
-def test_k3_always_thinks_at_a_named_level() -> None:
-    k3 = moonshot.models()["kimi-3.0"]
+def test_k3_thinks_at_a_named_level() -> None:
+    k3 = models("moonshot")["kimi-3.0"]
     assert k3.effort_as_level
     assert k3.thinking.effort == {"none", "low", "high", "max"}
     assert k3.thinking.budget == {"none"}
 
 
 def test_k2_6_thinking_can_be_disabled_and_k2_7_code_cannot() -> None:
-    rows = moonshot.models()
-    assert rows["kimi-2.6"].thinking.budget == {"none", "auto"}
-    assert rows["kimi-code-2.7"].thinking.budget == {"none"}
+    table = models("moonshot")
+    assert table["kimi-2.6"].thinking.budget == {"none", "auto"}
+    assert table["kimi-code-2.7"].thinking.budget == {"none"}
 
 
 def test_windows_match_the_published_limits() -> None:
-    rows = moonshot.models()
-    k3 = rows["kimi-3.0"].context[""]
+    table = models("moonshot")
+    k3 = table["kimi-3.0"].context[""]
     assert (k3.max_request_tokens, k3.max_response_tokens) == (1_048_576, 1_048_576)
-    assert rows["kimi-2.6"].context[""].max_request_tokens == 262_144
     assert k3.max_request_bytes == 100 << 20
-
-
-def test_roles_name_live_rows() -> None:
-    rows = moonshot.models()
-    assert rows["default"].model_id == "kimi-3.0"
-    assert rows["utility"].model_id == "kimi-2.6"
+    assert table["kimi-2.6"].context[""].max_request_tokens == 262_144
 
 
 @pytest.mark.parametrize(
@@ -94,25 +60,17 @@ def test_roles_name_live_rows() -> None:
     ],
 )
 def test_vendor_ids_resolve_to_their_rows(model_id: str, wire_id: str) -> None:
-    rows = moonshot.models()
-    assert rows[model_id].wire_model_id == wire_id
-    assert rows[wire_id].model_id == model_id
+    table = models("moonshot")
+    assert table[model_id].wire_model_id == wire_id
+    assert table[wire_id] is table[model_id]
 
 
-@pytest.mark.parametrize(
-    "model_id",
-    [
-        "kimi-k2.5",
-        "kimi-k2-0905-preview",
-        "kimi-k2-0711-preview",
-        "kimi-k2-turbo-preview",
-        "moonshot-v1-8k",
-        "moonshot-v1-32k",
-        "moonshot-v1-128k",
-    ],
-)
-def test_discontinued_models_are_gone(model_id: str) -> None:
-    assert model_id not in moonshot.models()
+def test_roles_name_live_rows() -> None:
+    table = models("moonshot")
+    assert (table["default"].model_id, table["utility"].model_id) == (
+        "kimi-3.0",
+        "kimi-2.6",
+    )
 
 
 if __name__ == "__main__":

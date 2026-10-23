@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, cast
 
 import asyncio
 import re
 
 from treekle import immutable
-from wesearch.fetch import Transport
-from wesearch.search.custom_types import (
+from wesearch.fetch import FetchSession, Transport
+from wesearch.mcp.types import SearchParamsSchema
+from wesearch.search.render import format_result
+from wesearch.search.search import search
+from wesearch.search.types import (
     SearchBackends,
-    SearchError,
     SearxngCategory,
 )
-from wesearch.search.render import format_result
-from wesearch.search.search import SearchParamsSchema, search
 from wesearch.types.errors import BotDetectionError
 
 from sagent.tools.core import (
@@ -84,6 +84,13 @@ class WebSearch:
 
     output_wrap: Annotated[Wrap, CLI_SETTABLE] = "wrap"
     """``wrap`` continues an over-wide line, ``chop`` marks the cut."""
+
+    session: FetchSession = field(
+        default_factory=FetchSession,
+        repr=False,
+        compare=False,
+    )
+    """Connections, Chrome, and the egress every search reuses."""
 
     def summary(self, args: Mapping[str, object]) -> str:
         """Return a short display label for this invocation.
@@ -153,6 +160,7 @@ class WebSearch:
                     q,
                     backend=backend,
                     categories=categories,
+                    session=self.session,
                 )
             else:
                 results = await asyncio.to_thread(
@@ -161,6 +169,7 @@ class WebSearch:
                     backend=backend,
                     categories=categories,
                     transport=transport,
+                    session=self.session,
                 )
         except BotDetectionError as err:
             # Surface the class guidance (which captcha / IP-rotation remedy)
@@ -172,7 +181,7 @@ class WebSearch:
                 f"{reason} {err.guidance}" if reason != err.guidance else err.guidance
             )
             return ToolResult(call_id="", content=content, is_error=True)
-        except (RuntimeError, SearchError, ValueError) as err:
+        except (RuntimeError, ValueError) as err:
             return ToolResult(call_id="", content=str(err), is_error=True)
         if not results:
             text = "(no results)"

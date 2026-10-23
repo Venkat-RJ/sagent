@@ -14,9 +14,9 @@ from unittest.mock import patch
 
 import asyncio
 
-from wesearch.paper.custom_types import PaperRecord
 from wesearch.paper.errors import PaperError
 from wesearch.paper.search import SearchResult
+from wesearch.paper.types import PaperRecord
 
 import pytest
 
@@ -217,7 +217,7 @@ def test_run_incomplete_results_differ_and_recover(
     records = (
         [PaperRecord(title="Known Paper", sources=("openalex",))] if has_hits else []
     )
-    args: MutableJSON = {"query": "rare topic", "source": "fused"}
+    args: dict[str, MutablePlainTree] = {"query": "rare topic", "source": "fused"}
     with patch(
         "sagent.tools.paper_search.search",
         side_effect=[
@@ -263,7 +263,11 @@ def test_run_incomplete_truncated_results_keep_existing_notice(source: str) -> N
         "sagent.tools.paper_search.search",
         return_value=_result([record], total=2, complete=False),
     ) as mock_search:
-        args: MutableJSON = {"query": "limit probe", "source": source, "limit": 1}
+        args: dict[str, MutablePlainTree] = {
+            "query": "limit probe",
+            "source": source,
+            "limit": 1,
+        }
         result = asyncio.run(PaperSearch().run(args))
         repeated = asyncio.run(PaperSearch().run(args))
     assert not result.is_error

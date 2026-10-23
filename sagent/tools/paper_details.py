@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import asyncio
 
 from treekle import PlainTree, from_plain, immutable
+from wesearch.fetch import FetchSession
 from wesearch.paper.details import (
     GraphSource,
     Listing,
@@ -44,7 +45,7 @@ from sagent.types.runtime import ToolResult
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from wesearch.paper.custom_types import IdType
+    from wesearch.paper.types import IdType
 
 
 # Paper metadata is effectively immutable on any timescale an agent cares
@@ -140,6 +141,9 @@ class PaperDetails:
         },
     )
 
+    def __init__(self, *, session: FetchSession | None = None) -> None:
+        self.session = FetchSession() if session is None else session
+
     def summary(self, args: Mapping[str, object]) -> str:
         """Return a short display label for this invocation.
 
@@ -226,8 +230,8 @@ class PaperDetails:
             op or "get",
             graph_source,
             s2_wire_id(kind, canonical),
-            bool(influential_only),
-            int(year_from) if year_from is not None else None,
+            influential_only,
+            year_from if year_from is not None else None,
             limit if op else 0,
             cap,
         )
@@ -265,7 +269,12 @@ class PaperDetails:
     ) -> str:
         """Run the metadata / references / citations lookup and render it."""
         if op == "":
-            rec = await asyncio.to_thread(metadata, kind, canonical)
+            rec = await asyncio.to_thread(
+                metadata,
+                kind,
+                canonical,
+                session=self.session,
+            )
             return format_block(rec, abstract_chars=abstract_chars)
         if op == "references":
             listing = await asyncio.to_thread(
@@ -274,6 +283,7 @@ class PaperDetails:
                 canonical,
                 limit=limit,
                 source=source,
+                session=self.session,
             )
             return _render_listing(listing, abstract_chars)
         listing = await asyncio.to_thread(
@@ -284,6 +294,7 @@ class PaperDetails:
             source=source,
             influential_only=influential_only,
             year_from=year_from,
+            session=self.session,
         )
         return _render_listing(listing, abstract_chars)
 
@@ -304,7 +315,11 @@ class PaperDetails:
         if cached is not None:
             return ToolResult(call_id="", content=cached)
         try:
-            records = await asyncio.to_thread(metadata_batch, wire_ids)
+            records = await asyncio.to_thread(
+                metadata_batch,
+                wire_ids,
+                session=self.session,
+            )
         except PaperError as e:
             return ToolResult(call_id="", content=str(e), is_error=True)
         blocks = [

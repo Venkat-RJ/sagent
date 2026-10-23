@@ -24,6 +24,7 @@ from sagent.compaction.summary import (
     build_continuation,
 )
 from sagent.testing import MockModelCaps
+from sagent.types.capability import ThinkingEffort
 from sagent.types.model import (
     Model,
     ModelRequest,
@@ -113,7 +114,7 @@ async def _apply_compact(
 
 def _last_prompt_text(model: _ScriptedModel) -> str:
     """Concatenated text of the last request's messages (the compaction prompt)."""
-    return cast(
+    return cast(  # pyrefly: ignore[redundant-cast] -- ty or basedpyright needs this cast; pyrefly already infers it.
         str,
         "\n".join(
             getattr(m, "text", "") or getattr(m, "content", "")
@@ -365,6 +366,29 @@ async def test_compact_with_keep_recent_preserves_tail() -> None:
     assert "partial summary" in result[0].text
     assert "m3" in result[0].text
     assert result[-1:] == history[-1:]
+
+
+@pytest.mark.asyncio
+async def test_compact_records_the_kept_tail_count_on_a_successful_summary() -> None:
+    """A ``summary`` splice reports its kept tail, so a reader never sees a false 0.
+
+    Only the fallback splice used to carry ``preserved_tail_count``; a successful
+    summary left it at the default, so a kept tail was indistinguishable from a
+    dropped one in the on-disk record and in ``CompactComplete``.
+    """
+    model = _ScriptedModel(stream_responses=[_summary_resp("partial summary")])
+    compactor = SummaryCompactor(keep_recent=2)
+    history: list[ModelContextEvent] = [
+        UserMessage(text="m1"),
+        AssistantMessage(text="a1"),
+        UserMessage(text="m2"),
+        AssistantMessage(text="a2"),
+        UserMessage(text="m3"),
+        AssistantMessage(text="a3"),
+    ]
+    override = await _build_compact_override(compactor, history, model)
+    assert override.strategy == "summary"
+    assert override.preserved_tail_count == 2
 
 
 @pytest.mark.asyncio
@@ -960,6 +984,34 @@ async def test_compact_truncated_summary_returns_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compact_keeps_a_finished_summary_missing_its_closing_tag() -> None:
+    """Live 2026-10-18: Luna ended a complete 9-section summary without the tag.
+
+    The reply finished normally (``model_finished``) and held every section,
+    yet the parse required ``</summary>``, so a good summary became a fallback
+    that dropped the chunk it summarized.
+    """
+    finished = ModelResponse(
+        message=AssistantMessage(
+            text="<analysis>scratch</analysis>\n<summary>\n9. Next Step: none",
+        ),
+        stop_reason="model_finished",
+    )
+    model = _ScriptedModel(stream_responses=[finished])
+    history: list[ModelContextEvent] = [
+        UserMessage(text="round1"),
+        AssistantMessage(text="resp1"),
+    ]
+
+    override = await _build_compact_override(SummaryCompactor(), history, model)
+
+    assert override.strategy == "summary"
+    text = "".join(m.text for m in override.payload if isinstance(m, UserMessage))
+    assert "9. Next Step: none" in text
+    assert "scratch" not in text
+
+
+@pytest.mark.asyncio
 async def test_compact_failure_preserves_current_user_turn() -> None:
     overflow = PromptTooLongError(actual_tokens=10, limit_tokens=4)
     model = _ScriptedModel(stream_responses=[overflow, overflow, overflow])
@@ -1101,6 +1153,76 @@ async def test_compactor_uses_alternate_model_when_provided() -> None:
     first = result[0]
     assert isinstance(first, UserMessage)
     assert body in first.text
+
+
+@dataclass(slots=True, kw_only=True)
+class _Thinks(_ScriptedModel):
+    """A scripted model that offers low and high effort, and notes each call's."""
+
+    supports_thinking: bool = True
+    valid_efforts: tuple[ThinkingEffort, ...] = ("low", "high")
+    efforts: list[ThinkingEffort] = field(default_factory=list)
+
+    @override
+    async def stream(
+        self,
+        request: ModelRequest,
+        publish: Callable[[RuntimeEvent], None] | None = None,
+    ) -> ModelResponse:
+        self.efforts.append(self.settings.thinking_effort)
+        return await super(_Thinks, self).stream(request, publish)
+
+
+_HISTORY: list[ModelContextEvent] = [
+    UserMessage(text="x"),
+    AssistantMessage(text="y"),
+]
+
+
+@pytest.mark.asyncio
+async def test_compact_runs_its_calls_at_the_given_effort_and_restores_the_models() -> (
+    None
+):
+    model = _Thinks(stream_responses=[_summary_resp("s")])
+    model.settings.thinking_effort = "high"
+
+    _ = await _apply_compact(SummaryCompactor(effort="low"), _HISTORY, model)
+
+    assert model.efforts == ["low"]
+    assert model.settings.thinking_effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_compact_restores_the_models_effort_after_an_error() -> None:
+    model = _Thinks(stream_responses=[RuntimeError("provider failed")])
+    model.settings.thinking_effort = "high"
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        _ = await _apply_compact(SummaryCompactor(effort="low"), _HISTORY, model)
+
+    assert model.settings.thinking_effort == "high"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("offers", "start", "ran"),
+    [
+        (("high",), "high", "high"),
+        (("low", "high"), "none", "none"),
+    ],
+)
+async def test_compact_keeps_the_models_effort_it_cannot_lower_to(
+    offers: tuple[ThinkingEffort, ...],
+    start: ThinkingEffort,
+    ran: ThinkingEffort,
+) -> None:
+    model = _Thinks(stream_responses=[_summary_resp("s")], valid_efforts=offers)
+    model.settings.thinking_effort = start
+
+    _ = await _apply_compact(SummaryCompactor(effort="low"), _HISTORY, model)
+
+    assert model.efforts == [ran]
+    assert model.settings.thinking_effort == start
 
 
 @dataclass(slots=True, kw_only=True)
@@ -1434,7 +1556,7 @@ def test_format_summary_without_summary_tag_returns_none() -> None:
     ``fallback_splice``. Information-leak + observability gap fix.
     """
     raw = "<analysis>private scratch notes</analysis>\nleftover analysis text"
-    assert _format_summary(raw) is None
+    assert _format_summary(raw, finished=True) is None
 
 
 # --- M31: empty groups[] after drop must not send a content-free request --
@@ -1543,7 +1665,7 @@ def test_strip_attachments_drop_keeps_later_entries_and_logs_why(
 def test_summary_compactor_rejects_invalid_direction() -> None:
     with pytest.raises(ValueError, match="direction"):
         _ = SummaryCompactor(
-            direction="sideways",  # ty: ignore[invalid-argument-type] -- The negative test passes a deliberately invalid Literal value.  # pyright: ignore[reportArgumentType] -- The negative test passes a deliberately invalid Literal value.
+            direction="sideways",  # ty: ignore[invalid-argument-type] -- The negative test passes a deliberately invalid Literal value.  # pyright: ignore[reportArgumentType] -- The negative test passes a deliberately invalid Literal value.  # pyrefly: ignore[bad-argument-type] -- The negative test passes a deliberately invalid Literal value.
         )
 
 
@@ -1699,9 +1821,12 @@ async def test_compact_fallback_token_before_uses_model_estimator() -> None:
     assert override.token_before == expected
 
 
-@pytest.mark.parametrize("raw", ["<summary> </summary>", "<summary>\n\t</summary>"])
+@pytest.mark.parametrize(
+    "raw",
+    ["<summary> </summary>", "<summary>\n\t</summary>", "<summary>\n\t"],
+)
 def test_format_summary_rejects_empty_payload(raw: str) -> None:
-    assert _format_summary(raw) is None
+    assert _format_summary(raw, finished=True) is None
 
 
 def test_compactor_rejects_nan_utilization_trigger() -> None:
@@ -1750,6 +1875,26 @@ async def test_verify_empty_summary_block_keeps_first_pass() -> None:
 def test_continuation_preserves_template_tokens_in_summary() -> None:
     body = "literal {{resume}} and {{recent}}"
     assert body in build_continuation(body, recent_preserved=True)
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_summarize_does_not_claim_context_was_dropped() -> None:
+    """The notice told the model earlier context was lost when none existed.
+
+    With only the current turn to keep, ``nothing to summarize`` coalesced the
+    failure notice onto the user's own message -- ahead of the instructions a
+    folded prompt keeps verbatim at its head.
+    """
+    model = _ScriptedModel(stream_responses=[])
+    current = UserMessage(text="OUTPUT-FORMAT: answer in this format")
+
+    splice = await _build_compact_override(SummaryCompactor(), [current], model)
+
+    assert splice.strategy == "summary_fallback"
+    assert splice.fallback_reason == "nothing to summarize"
+    [only] = splice.payload
+    assert isinstance(only, UserMessage)
+    assert only.text == current.text
 
 
 @pytest.mark.asyncio

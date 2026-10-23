@@ -298,7 +298,7 @@ class World:
                 {
                     "xy": [px, py],
                     "lock": PLATE_LETTERS[li],
-                    "open": bool(self.locks[li]["open"]),
+                    "open": self.locks[li]["open"],
                 }
                 for (px, py), li in self._plate_lock.items()
                 if self._within_sight(a, (px, py))

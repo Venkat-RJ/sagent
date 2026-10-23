@@ -5242,6 +5242,11 @@ class TestUserMessageAlternation:
             f"peer attribution lost when merging two sources; got {tail!r}"
         )
 
+    def test_coalescing_no_user_side_entry_is_refused_by_name(self) -> None:
+        """An empty run has no entry to stand for it, which the error says."""
+        with pytest.raises(ValueError, match=r"^Expected len\(merged\) == 1\.$"):
+            _ = runtime._coalesce_user_side([])
+
     def test_append_or_coalesce_user_merges_cross_type(self) -> None:
         """UserMessage tail + AgentSend incoming merge into a single user turn."""
         agent = _runtime_for_alternation_tests()
@@ -6265,7 +6270,7 @@ async def test_agent_idle_suppressed_while_compact_task_running() -> None:
             timeout_sec=1.0,
         )
         # While the compactor blocks, AgentIdle must not fire.
-        idles_during_compact = []
+        idles_during_compact: list[AgentIdle] = []
         for _ in range(10):
             await asyncio.sleep(0)
             idles_during_compact = [
@@ -7693,7 +7698,7 @@ def test_legacy_cross_session_mask_range_dropped_at_deserialize() -> None:
     same-session ranges, so downstream coalesce never sees a malformed range.
     """
     sid = "s"
-    record = {
+    record: dict[str, object] = {
         "kind": "context_splice",
         "ref": {"session_id": sid, "ordinal": 2},
         "mask": [

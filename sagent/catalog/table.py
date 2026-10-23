@@ -1,7 +1,10 @@
 """Which model a name means, and what it can do over one transport.
 
 A vendor catalog is a :class:`ModelTable`: its rows, newest-first within
-each family, plus a few roles (``default``, ``utility``, ``best``). Its keys
+each family, plus its roles, a price ladder from the vendor's most capable
+model down: ``best``, ``default``, ``everyday``, ``utility``. A table that
+names a ``default`` but no ``best`` or ``everyday`` answers both with its
+default, so every vendor answers all four. Its keys
 are the exact names, each ``family-major.minor`` (``opus-5.0``, never
 ``opus-5``). One name reaches a row four ways, in this order:
 
@@ -34,6 +37,8 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, cast, get_args, override
 
+import re
+
 from sagent.types.capability import (
     ContextTag,
     ModelCapability,
@@ -43,6 +48,8 @@ from sagent.types.capability import (
 
 __all__ = [
     "CONTEXT_TAGS",
+    "EXACT_NAME",
+    "FALLBACK_ROLES",
     "ModelCatalog",
     "ModelTable",
     "UnknownModelError",
@@ -56,11 +63,17 @@ __all__ = [
 # hand-written tuple omitted would be unparseable while type-checking clean.
 # The default window's ``""`` is filtered out -- no id carries it.
 CONTEXT_TAGS: Final[tuple[ContextTag, ...]] = tuple(
-    t
-    for t in cast(tuple[ContextTag, ...], get_args(cast(object, ContextTag.__value__)))
-    if t
+    t for t in cast(tuple[ContextTag, ...], get_args(ContextTag.__value__)) if t
 )
 """Window-size suffixes a model id may carry (e.g. ``...+1m``)."""
+
+FALLBACK_ROLES: Final = ("best", "everyday")
+"""Roles that mean ``default`` in a table that does not name them."""
+
+EXACT_NAME: Final = re.compile(
+    r"(?P<family>[a-z0-9]+(?:-[a-z0-9]+)*)-(?P<major>\d+)\.(?P<minor>\d+)",
+)
+"""A catalog name, ``family-major.minor``; the family carries no dots or case."""
 
 
 class UnknownModelError(ValueError):
@@ -115,20 +128,39 @@ class ModelTable(Mapping[str, ModelCapability]):
     rows: tuple[ModelCapability, ...]
     """Every row, newest-first within each family."""
 
-    roles: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    roles: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType[str, str]({}),
+    )
     """Role name to the family or id it means (``{"default": "opus"}``)."""
 
     _by_id: Mapping[str, ModelCapability] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Index rows and check every role names a row."""
+        """Index rows; check family order and that every role names a row."""
         by_id: dict[str, ModelCapability] = {}
+        newest: dict[str, tuple[int, int]] = {}
         for row in self.rows:
             if row.model_id in by_id:
                 raise ValueError(f"duplicate model id {row.model_id!r}")
             by_id[row.model_id] = row
+            # A caller-supplied id (``local-model``) has no version to order by.
+            match = EXACT_NAME.fullmatch(row.model_id)
+            if match is None:
+                continue
+            family = match["family"]
+            version = (int(match["major"]), int(match["minor"]))
+            if family in newest and version >= newest[family]:
+                raise ValueError(
+                    f"family {family!r} must list rows newest-first;"
+                    f" {row.model_id!r} follows an older row",
+                )
+            newest[family] = version
         object.__setattr__(self, "_by_id", MappingProxyType(by_id))
-        object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
+        roles = dict(self.roles)
+        if "default" in roles:
+            for role in FALLBACK_ROLES:
+                roles.setdefault(role, roles["default"])
+        object.__setattr__(self, "roles", MappingProxyType(roles))
         for role, target in self.roles.items():
             if self._named(target) is None:
                 raise ValueError(f"role {role!r} names no model: {target!r}")
@@ -234,6 +266,12 @@ class ModelCatalog:
                 f"Unknown model {model_id!r}. Known models: {known}",
             )
         capability = row & self.transport
+        if context in ("+max", "+min"):
+            select = max if context == "+max" else min
+            context = select(
+                capability.context,
+                key=lambda tag: capability.context[tag].max_request_tokens,
+            )
         # A window the default context already spans needs no row of its own.
         if (
             context == "+1m"

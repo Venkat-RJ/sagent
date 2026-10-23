@@ -243,6 +243,7 @@ from sagent.agent.context import (
     validate_context,
 )
 from sagent.types.exceptions import (
+    describe,
     log_exception_or_warning,
     log_task_exception,
 )
@@ -1552,7 +1553,8 @@ class AgentRuntime:
     # assistant turn). - ``ride_along``: coalesce onto the user side.
     def _flush_pending(self) -> None:
         """Commit every queued :class:`_PendingCommit`, in arrival order, in-slot."""
-        pending, self._pending_commits = self._pending_commits, []
+        pending = self._pending_commits
+        self._pending_commits = []
         for commit in pending:
             if commit.kind == "pairing":
                 if commit.result is None:
@@ -1668,6 +1670,7 @@ class AgentRuntime:
                     self._was_idle = True
                 items = await self.inbox.drain()
                 self._was_idle = False
+                refused = False
 
                 for item_idx, item in enumerate(items):
                     match item:
@@ -2029,6 +2032,7 @@ class AgentRuntime:
                                     before_tool_spawn,
                                     *items[item_idx + 1 :],
                                 )
+                                refused = True
                                 break
                             self.append_history(msg)
                             self.publish(item)
@@ -2158,12 +2162,19 @@ class AgentRuntime:
                         case _:
                             pass
 
+                # A refused response never joined the history, which still ends where
+                # the model was called from: the event it was refused with goes first,
+                # or the gate below calls the model again on the same history.
+                if refused:
+                    continue
+
                 if (
                     self._pending_switches
                     and self.model_call is None
                     and self.compact_task is None
                 ):
-                    pending, self._pending_switches = self._pending_switches, []
+                    pending = self._pending_switches
+                    self._pending_switches = []
                     for switch in pending:
                         self._apply_pending_switch(switch)
 
@@ -2944,9 +2955,10 @@ class AgentRuntime:
             slot = EXCLUSIVE_KEY if exclusive else key
             group = by_key.get(slot)
             if group is None:
-                group = by_key[slot] = []
+                group = by_key[slot] = [call]
                 groups.append(group)
-            group.append(call)
+            else:
+                group.append(call)
         return groups
 
     def _serialize_key(self, call: ToolCall) -> str | None:
@@ -3070,13 +3082,13 @@ class AgentRuntime:
                 parent_id,
             )
             result = await tool.run(call.args)
-            replacements: dict[str, object] = {}
-            if not result.call_id:
-                replacements["call_id"] = call.id
-            if result.parent_id == -1 and parent_id != -1:
-                replacements["parent_id"] = parent_id
-            if replacements:
-                result = dataclasses.replace(result, **replacements)
+            adopt_parent = result.parent_id == -1 and parent_id != -1
+            if not result.call_id or adopt_parent:
+                result = dataclasses.replace(
+                    result,
+                    call_id=result.call_id or call.id,
+                    parent_id=parent_id if adopt_parent else result.parent_id,
+                )
         except asyncio.CancelledError:
             logger.debug(
                 "runtime tool cancelled: call_id=%s tool=%s parent_id=%s",
@@ -3108,7 +3120,7 @@ class AgentRuntime:
             result = ToolResult(
                 call_id=call.id,
                 parent_id=parent_id,
-                content=f"{type(exc).__name__}: {exc}",
+                content=describe(exc),
                 is_error=True,
             )
         finally:

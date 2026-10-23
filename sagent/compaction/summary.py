@@ -14,8 +14,9 @@ Usage::
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from html import escape
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final, Literal, get_args
 
 import dataclasses
 import logging
@@ -24,7 +25,9 @@ import re
 
 from sagent.agent.retry import send_with_retry
 from sagent.compaction.history import estimate_entry_tokens
+from sagent.providers.lib.stop_reason import TRUNCATED_STOP_REASONS
 from sagent.tools.core import read_asset, recipe_dict
+from sagent.types.capability import ThinkingEffort
 from sagent.types.compactor import ReattachPolicy
 from sagent.types.model import (
     Model,
@@ -52,7 +55,7 @@ from sagent.types.tape import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator, Sequence
 
     from sagent.types.settings import AgentSettings
 
@@ -115,6 +118,10 @@ class SummaryCompactor:
           shortens some result, then drops whole rounds. ``0`` disables
           the cap. Default ``8000``.
       model: Optional model override; otherwise uses the caller's model.
+      effort: Thinking effort for the summary's model calls. The model's own
+          setting returns afterwards, even on error; a model that does not
+          offer it keeps its own, and one already at or below it is not
+          raised. ``None`` leaves the model as it is.
 
     Raises:
       ValueError: ``max_attempts`` is less than 1, or ``utilization_trigger``
@@ -137,6 +144,7 @@ class SummaryCompactor:
         retry_tool_result_cap_chars: int = 8_000,
         reattach: ReattachPolicy | None = None,
         model: Model | None = None,
+        effort: ThinkingEffort | None = None,
     ) -> None:
         if max_attempts < 1:
             raise ValueError(f"max_attempts must be >= 1, got {max_attempts}")
@@ -170,6 +178,7 @@ class SummaryCompactor:
         self._retry_tool_result_cap_chars = retry_tool_result_cap_chars
         self._reattach = reattach or ReattachPolicy()
         self._model = model
+        self._effort = effort
 
     @property
     def reattach(self) -> ReattachPolicy:
@@ -321,6 +330,24 @@ class SummaryCompactor:
 
         """
         compact_model = self._model or model
+        with _at_effort(compact_model, self._effort):
+            return await self._summarize(
+                compact_model,
+                tape,
+                context,
+                mint_ref,
+                custom_instructions,
+            )
+
+    async def _summarize(
+        self,
+        compact_model: Model,
+        tape: Sequence[TapeRecord],
+        context: Sequence[ModelContextEvent],
+        mint_ref: Callable[[], TapeRef],
+        custom_instructions: str | None,
+    ) -> ContextSplice:
+        """Summarize ``context`` with ``compact_model`` as it now stands."""
         # The barrier mask covers everything currently on the tape so
         # every alive splice gets absorbed; the new summary becomes the
         # sole live editor. ``full_tape_mask`` partitions by session_id
@@ -371,7 +398,7 @@ class SummaryCompactor:
                 )
         else:
             to_summarize = _strip_attachments(history)
-            to_keep = []
+            to_keep: list[ModelContextEvent] = []
 
         token_before = estimate_entry_tokens(compact_model, history)
 
@@ -400,15 +427,21 @@ class SummaryCompactor:
         groups = _group_history_by_round(to_summarize)
         if not groups:
             # Summarizing nothing would ask the model to invent a history
-            # and label it ``summary``.
-            return _build_fallback_splice(
-                "nothing to summarize",
-                direction=direction,
-                to_keep=to_keep,
-                mint_ref=mint_ref,
+            # and label it ``summary``. Nothing was dropped either, so the
+            # kept tail goes back alone: a "compaction failed" notice here sat
+            # ahead of the user's own instructions.
+            logger.warning("compactor falling back: nothing to summarize")
+            payload = coalesce_roles(to_keep)
+            return ContextSplice(
+                ref=mint_ref(),
                 mask=mask,
+                insert_after=None,
+                payload=payload,
+                strategy="summary_fallback",
                 token_before=token_before,
-                model=compact_model,
+                token_after=estimate_entry_tokens(compact_model, payload),
+                fallback_reason="nothing to summarize",
+                preserved_tail_count=len(to_keep),
             )
         try:
             response, groups, failure = await self._send_shrinking(
@@ -444,12 +477,18 @@ class SummaryCompactor:
             )
 
         raw = summary_text
+        finished = response.stop_reason not in TRUNCATED_STOP_REASONS
         if self._verify_summary:
             try:
-                raw = await self._verify(compact_model, groups, raw)
+                raw, finished = await self._verify(
+                    compact_model,
+                    groups,
+                    raw,
+                    finished=finished,
+                )
             except Exception as exc:  # noqa: BLE001 -- Summary verification is best-effort because provider output may be malformed.
                 logger.warning("summary verification failed; using original: %s", exc)
-        summary = _format_summary(raw)
+        summary = _format_summary(raw, finished=finished)
         if summary is None:
             return _build_fallback_splice(
                 "missing <summary>",
@@ -487,6 +526,11 @@ class SummaryCompactor:
             strategy="summary",
             token_before=token_before,
             token_after=token_after,
+            # A successful summary keeps ``to_keep`` verbatim too; recording the
+            # count here (not on the fallback alone) is what makes the kept tail
+            # observable -- a reader of a ``summary`` splice otherwise saw 0 and
+            # could not tell a kept tail from a dropped one.
+            preserved_tail_count=len(to_keep),
         )
 
     # The single owner of tool-result truncation: every request caps results at
@@ -554,13 +598,15 @@ class SummaryCompactor:
     # Re-runs the model with the original entries plus the produced summary, asking it
     # to identify any missing technical details, file paths, tool results, or user
     # constraints and emit an improved summary. Returns the improved text when non-
-    # empty, otherwise the original.
+    # empty, otherwise the original, each with whether its reply ended on its own.
     async def _verify(
         self,
         compact_model: Model,
         groups: list[list[ModelContextEvent]],
         raw_summary: str,
-    ) -> str:
+        *,
+        finished: bool,
+    ) -> tuple[str, bool]:
         """Self-verification probe: ask the model to critique its own summary."""
         probe = (
             "You produced this summary of the prior conversation:\n\n"
@@ -588,17 +634,18 @@ class SummaryCompactor:
             raise PromptTooLongError(f"summary verification: {failure}")
         improved = response.message.text.strip()
         if not improved or improved.upper() == "IDENTICAL":
-            return raw_summary
+            return raw_summary, finished
         # Only accept a replacement that still satisfies the contract the
         # ORIGINAL already met. Verification is an optional refinement,
         # so it may not turn a success into a failure: unvalidated prose
         # ("Looks complete.") passed here, then failed ``_format_summary``
         # downstream and took the whole compaction to fallback -- losing
         # the valid summary the first call had produced.
-        if _format_summary(improved) is None:
+        improved_finished = response.stop_reason not in TRUNCATED_STOP_REASONS
+        if _format_summary(improved, finished=improved_finished) is None:
             logger.warning("verifier returned no <summary> block; keeping the original")
-            return raw_summary
-        return improved
+            return raw_summary, finished
+        return improved, improved_finished
 
 
 def build_continuation(
@@ -802,9 +849,9 @@ def _groups_to_drop(
     return max(1, len(groups) // 5)
 
 
-# Used for every path that fails to produce a real ``<summary>`` block: empty input
-# after split, all groups dropped on overflow, the model exhausting attempts, or
-# returning a blank/unparseable body. Keeps ``strategy='summary_fallback'`` the single
+# Used for every path where history was dropped without a real ``<summary>`` block:
+# all groups dropped on overflow, the model exhausting attempts, or returning a
+# blank/unparseable body. Keeps ``strategy='summary_fallback'`` the single
 # observability signal for "nothing was summarized".
 def _build_fallback_splice(
     reason: str,
@@ -819,7 +866,7 @@ def _build_fallback_splice(
     """Build the no-summary ``summary_fallback`` ContextSplice."""
     logger.warning("compactor falling back: %s", reason)
     fb = UserMessage(
-        text="Compaction failed. Previous context summarized on disk only.",
+        text="Compaction failed. Earlier context was dropped without a summary.",
     )
     if direction == "from":
         payload = coalesce_roles((fb, *to_keep))
@@ -998,10 +1045,11 @@ def _append_user_guidance(body: str, guidance: str) -> str:
 # ``strategy='summary'`` for an output that never passed the contract. Return ``None``
 # instead so the caller dispatches to ``fallback_splice`` with
 # ``strategy='summary_fallback'``.
-def _format_summary(raw: str) -> str | None:
+def _format_summary(raw: str, *, finished: bool) -> str | None:
     r"""Strip ``<analysis>``, extract ``<summary>`` content."""
     text = re.sub(r"<analysis>[\s\S]*?</analysis>", "", raw)
-    m = re.search(r"<summary>([\s\S]*?)</summary>", text)
+    closing = r"(?:</summary>|\Z)" if finished else r"</summary>"
+    m = re.search(rf"<summary>([\s\S]*?){closing}", text)
     if not m:
         logger.warning(
             "compactor output missing <summary> tag (%d chars); falling back",
@@ -1014,3 +1062,33 @@ def _format_summary(raw: str) -> str | None:
     text = f"Summary:\n{m.group(1).strip()}"
     text = re.sub(r"\n\n+", "\n\n", text)
     return text.strip()
+
+
+def _ranks_below(effort: ThinkingEffort, other: ThinkingEffort) -> bool:
+    """Say whether ``effort`` is a lower thinking level than ``other``."""
+    ranked = get_args(ThinkingEffort.__value__)
+    return ranked.index(effort) < ranked.index(other)
+
+
+@contextmanager
+def _at_effort(model: Model, effort: ThinkingEffort | None) -> Generator[None]:
+    """Run the body with ``model`` at ``effort``, then put its own setting back."""
+    settings = model.settings
+    before = settings.thinking_effort
+    lowered = False
+    if effort is not None and _ranks_below(effort, before):
+        try:
+            settings.thinking_effort = effort
+        except ValueError:
+            logger.info(
+                "the model does not offer effort %r; keeping %r",
+                effort,
+                before,
+            )
+        else:
+            lowered = True
+    try:
+        yield
+    finally:
+        if lowered:
+            settings.thinking_effort = before

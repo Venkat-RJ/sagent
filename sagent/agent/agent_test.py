@@ -16,6 +16,7 @@ import dataclasses
 import inspect
 import json
 import logging
+import re
 import threading
 import time
 
@@ -65,6 +66,7 @@ from sagent.agent.state import (
     approx_tokens,
     tool_state_context,
 )
+from sagent.compaction import fold
 from sagent.compaction.summary import SummaryCompactor
 from sagent.lib import last_models, token_count
 from sagent.providers.lib.errors import PolicyBlockedError
@@ -919,14 +921,14 @@ def test_agent_tools_map_preserves_compact_restorable_identity() -> None:
         async def post_compact_restore(
             self,
             history: list[ModelContextEvent],
-            tool_state: object,
+            tool_state: ToolState,
             *,
-            budget_chars: int = 100_000,
+            budget_tokens: int,
+            estimate_tokens: Callable[[str], int],
         ) -> None:
-            del history, tool_state, budget_chars
+            del history, tool_state, budget_tokens, estimate_tokens
 
     tool = _RestorableStub()
-    assert isinstance(tool, CompactRestorable)
     a = _build_agent(tools=[tool])
     stored = a.tools_map["Echo"]
     assert isinstance(stored, CompactRestorable), (
@@ -3729,23 +3731,23 @@ async def test_activity_active_spans_tool_execution() -> None:
     assert a.activity.active is True
 
     a.publish(ModelResponseComplete(message=msg_with_tools))
-    assert a.activity.active is True, (
+    assert a.activity.active is True, (  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
         "spinner should keep ticking while tools run; tool_calls in the "
         "response mean the cohort is about to fire"
     )
 
     # Tool result arrives.
     a.publish(ToolResult(call_id="c1", content="ok"))
-    assert a.activity.active is True
+    assert a.activity.active is True  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
 
     # Round 2 model call fires.
     a.publish(ModelCallStarted())
-    assert a.activity.active is True
+    assert a.activity.active is True  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
 
     # Round 2 has no tool calls; model truly idles.
     a.publish(ModelResponseComplete(message=AssistantMessage(text="done")))
     a.publish(ModelIdle())
-    assert a.activity.active is False, "ModelIdle marks the end of the round chain"
+    assert a.activity.active is False, "ModelIdle marks the end of the round chain"  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
 
 
 @pytest.mark.asyncio
@@ -3766,7 +3768,7 @@ async def test_activity_active_clears_on_model_response_error() -> None:
     assert a.activity.active is True
 
     a.publish(ModelResponseError(RuntimeError("boom")))
-    assert a.activity.active is False, (
+    assert a.activity.active is False, (  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
         "ModelResponseError is terminal -- spinner must stop"
     )
     assert a.activity.current_call_start == 0.0, (
@@ -5012,7 +5014,7 @@ async def test_compact_if_needed_triggers_on_last_response_total() -> None:
         ),
     )
     await a.compact_if_needed(history, a.model)
-    assert rec.compacted is True
+    assert rec.compacted is True  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
 
 
 @pytest.mark.asyncio
@@ -5501,12 +5503,9 @@ async def test_agent_compactor_scrunches_when_inner_output_still_oversized() -> 
 
     assert await a.compact_now() is True
 
-    # The bridge invoked the producer multiple times: once for the
-    # normal compact, then again for each scrunch pass. At least 2.
-    assert compactor.compact_calls >= 2, (
-        f"expected scrunch to invoke producer multiple times, got"
-        f" {compactor.compact_calls}"
-    )
+    # The producer's one oversized message is folded, not re-summarized by
+    # scrunch passes (``scrunch_test.py`` covers multi-pass folding).
+    assert compactor.compact_calls == 1
     # Final resolved view must fit (input + buffer below max).
     resolved = a.runtime.context().messages
     visible_chars = sum(
@@ -5602,8 +5601,11 @@ async def test_agent_compactor_scrunch_passes_record_cost() -> None:
     a.runtime.append_history(UserMessage(text="x" * 4_000))
 
     assert await a.compact_now() is True
-    assert compactor.compact_calls >= 2
-    assert a.cost_tracker.spend.total == pytest.approx(0.25 * compactor.compact_calls)
+    # The oversized producer output is one message, so the fold condenses
+    # it; each fold call is a paid side call like the producer's own.
+    calls = sum(a.cost_tracker.calls_by_model.values())
+    assert calls >= 2
+    assert a.cost_tracker.spend.total == pytest.approx(0.25 * calls)
 
 
 @pytest.mark.asyncio
@@ -5730,15 +5732,19 @@ async def test_agent_compactor_repairs_payload_after_scrunch() -> None:
                     tape=tape,
                 )
             # Scrunch passes: emit an AM with a tool_call but NO ToolResult.
-            return _summary_override(
-                [
+            return ContextSplice(
+                ref=mint_ref(),
+                mask=full_tape_mask(tape),
+                insert_after=None,
+                payload=(
+                    UserMessage(text="summary"),
                     AssistantMessage(
                         text="partial",
                         tool_calls=(ToolCall(id="orphan", name="x", args={}),),
                     ),
-                ],
-                mint_ref,
-                tape=tape,
+                ),
+                strategy="summary",
+                paired_externally=frozenset({"orphan"}),
             )
 
         def maintain(
@@ -7984,6 +7990,47 @@ async def test_tool_call_round_cap_blocks_second_round_when_cap_is_one() -> None
 
 
 @pytest.mark.asyncio
+async def test_a_refused_round_calls_the_model_only_for_the_next_message() -> None:
+    """A refused response never joins the history, so nothing calls the model on it.
+
+    A call on the history the refused response left would answer the old message
+    inside the next one.
+    """
+
+    @dataclass(slots=True, kw_only=True)
+    class QuietTool(StubTool):
+        @override
+        def serialize_key(self, args: Mapping[str, object]) -> str | None:
+            del args
+            return None
+
+        @override
+        async def run(self, args: Mapping[str, object]) -> ToolResult:
+            del args
+            return ToolResult(call_id="", content="ran")
+
+    model = StubModel(
+        responses=[
+            AssistantMessage(tool_calls=(ToolCall(id="c1", name="Echo", args={}),)),
+            AssistantMessage(tool_calls=(ToolCall(id="c2", name="Echo", args={}),)),
+        ],
+    )
+    a = Agent(model=model, tools=[QuietTool()], max_tool_call_rounds=1)
+    _ = [event async for event in a.run(UserMessage(text="go"))]
+    _ = [event async for event in a.run(UserMessage(text="next"))]
+
+    asked = [
+        next(
+            message.text
+            for message in reversed(request.messages)
+            if isinstance(message, UserMessage)
+        )
+        for request in model.received
+    ]
+    assert asked == ["go", "go", "next"]
+
+
+@pytest.mark.asyncio
 async def test_clear_drops_cancelled_background_result_after_fresh_turn() -> None:
     started = asyncio.Event()
     idle = asyncio.Event()
@@ -8250,6 +8297,17 @@ async def test_stream_rebuilds_system_per_request() -> None:
         pass
     assert call_count > pre_run_count
     assert model.received[-1].system == f"sys-v{call_count}"
+
+
+@pytest.mark.asyncio
+async def test_every_request_carries_the_session_as_its_cache_key() -> None:
+    """A provider that routes its prefix cache by key reuses this session's turns."""
+    model = StubModel()
+    a = _build_agent(model=model)
+    for text in ("one", "two"):
+        async for _ in a.run(UserMessage(text=text)):
+            pass
+    assert [r.cache_key for r in model.received] == [a.session_id] * 2
 
 
 @pytest.mark.asyncio
@@ -9209,10 +9267,12 @@ async def test_will_retrigger_uses_agent_budget_not_model_cap() -> None:
 
     @dataclass(slots=True, kw_only=True)
     class _BudgetModel(StubModel):
+        # Over the 0.95 retrigger threshold (~75) yet within the 80-token
+        # target, so the splice is kept and flagged rather than refused.
         @override
         def approx_request_tokens(self, request: ModelRequest) -> int:
             del request
-            return 90
+            return 78
 
     @dataclass(slots=True, kw_only=True)
     class _RecordingCompactor:
@@ -10277,6 +10337,245 @@ async def test_the_driver_claim_clears_once_the_loop_exits() -> None:
         await a._drive_task
 
     assert not a._run_active, "the claim latched after its loop exited"
+
+
+@dataclass(slots=True, kw_only=True)
+class _FoldingModel(StubModel):
+    """Answer fold calls with the chunk markers they carried; others as a stub.
+
+    A fold call is recognized by the fold prompt it carries, never by the
+    request's shape, so an agent with a system prompt cannot misroute one.
+    A chunk marker in the final request proves its chunk was represented.
+    """
+
+    fold_requests: list[ModelRequest] = field(default_factory=list)
+    padding_chars: int = 0
+
+    @override
+    async def stream(
+        self,
+        request: ModelRequest,
+        publish: Callable[[RuntimeEvent], None] | None = None,
+    ) -> ModelResponse:
+        body = _user_text(request)
+        if "<content>" not in body:
+            return await super(_FoldingModel, self).stream(request, publish)
+        self.fold_requests.append(request)
+        listing = " ".join(re.findall(r"C\d{3}", body))
+        return ModelResponse(
+            message=AssistantMessage(text=f"saw {listing}\n{'p' * self.padding_chars}"),
+        )
+
+
+def _user_text(request: ModelRequest) -> str:
+    """Return the joined text of every user message in ``request``."""
+    return "\n".join(m.text for m in request.messages if isinstance(m, UserMessage))
+
+
+def _diff_prompt(chunks: int = 200) -> tuple[str, list[str]]:
+    """Return a commit-message request: instructions first, then a marked diff."""
+    markers = [f"C{i:03d}" for i in range(chunks)]
+    diff = "".join(f"{m} {'d' * 994}\n" for m in markers)
+    return f"OUTPUT-FORMAT: BEGIN_COMMIT ... END_COMMIT\n{diff}LAST-HUNK\n", markers
+
+
+async def _run_agent(model: _FoldingModel, *prompts: str) -> Agent:
+    """Commit all but the last prompt, then run the agent on the last one."""
+    budget = AgentSettings(
+        max_request_tokens=8_000,
+        max_response_tokens=1_000,
+        buffer_tokens=1_000,
+    )
+    a = Agent(model=model, compactor=SummaryCompactor(), budget=budget)
+    for prompt in prompts[:-1]:
+        _ = a.runtime.append_history(UserMessage(text=prompt))
+    async for _ in a.run(UserMessage(text=prompts[-1])):
+        pass
+    return a
+
+
+def _assert_folded(a: Agent, model: _FoldingModel, markers: list[str]) -> None:
+    """One fitting request; head and tail verbatim; every chunk represented."""
+    [request] = model.received
+    assert model.approx_request_tokens(request) <= SummaryCompactor().largest_context(
+        a.budget,
+    )
+    text = _user_text(request)
+    assert "OUTPUT-FORMAT: BEGIN_COMMIT ... END_COMMIT" in text, text[:200]
+    assert "LAST-HUNK" in text, text[-200:]
+    assert set(re.findall(r"C\d{3}", text)) == set(markers)
+    assert all(
+        model.approx_request_tokens(r) <= a.max_request_tokens
+        for r in model.fold_requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_user_message_larger_than_the_window_is_folded_to_fit() -> None:
+    """A 1.29M-token stdin prompt wedged auto-compaction in a retry loop.
+
+    Compaction kept the trailing user turn verbatim, so no summary could
+    shrink it, and the unchanged request shipped once per recovery attempt.
+    """
+    model = _FoldingModel()
+    prompt, markers = _diff_prompt()
+
+    a = await _run_agent(model, prompt)
+
+    _assert_folded(a, model, markers)
+    assert len(model.fold_requests) >= 2
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_message_folds_when_summaries_are_long() -> None:
+    """Luna on a 1.5 MB diff: each summary was ~3k tokens; scrunch then gave up."""
+    model = _FoldingModel(padding_chars=2_000)
+    prompt, markers = _diff_prompt()
+
+    a = await _run_agent(model, prompt)
+
+    _assert_folded(a, model, markers)
+
+
+@pytest.mark.asyncio
+async def test_user_messages_that_coalesce_past_the_window_are_folded() -> None:
+    """Each half fits; the merged user turn the runtime commits does not."""
+    model = _FoldingModel()
+    prompt, markers = _diff_prompt(chunks=30)
+    middle = prompt.index("C015")
+
+    a = await _run_agent(model, prompt[:middle], prompt[middle:])
+
+    _assert_folded(a, model, markers)
+
+
+@pytest.mark.asyncio
+async def test_a_user_message_within_the_window_is_left_inline() -> None:
+    model = _FoldingModel()
+
+    _ = await _run_agent(model, "fits")
+
+    [request] = model.received
+    assert _user_text(request) == "fits"
+    assert model.fold_requests == []
+
+
+@pytest.mark.asyncio
+async def test_fold_messages_folds_only_oversized_user_side_text_to_even_shares(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each user-side message over half the target folds to an equal share of half.
+
+    The rest of the payload passes through in order and untouched, and every fold
+    call may send what one model request leaves after its reply.
+    """
+    folds: list[tuple[str, int, int]] = []
+
+    async def fake_fold(
+        text: str,
+        *,
+        model: Model,
+        max_tokens: int,
+        call_tokens: int,
+    ) -> str:
+        del model
+        folds.append((text[:1], max_tokens, call_tokens))
+        return f"folded {text[:1]}"
+
+    monkeypatch.setattr(fold, "fold_text", fake_fold)
+    a = Agent(
+        model=StubModel(),
+        compactor=SummaryCompactor(),
+        budget=AgentSettings(
+            max_request_tokens=8_000,
+            max_response_tokens=1_000,
+            buffer_tokens=1_000,
+        ),
+    )
+    bridge = _AgentCompactor(SummaryCompactor(), a)
+    target = 1_000
+    at_half = a.model.approx_text_tokens("h" * 2_000)
+    assert at_half == target // 2, "the boundary message must sit exactly at half"
+    big_user = UserMessage(text="u" * 8_000)
+    big_send = AgentSendMessage(source="peer", text="s" * 8_000)
+    payload: list[ModelContextEvent] = [
+        big_user,
+        AssistantMessage(text="a" * 8_000),
+        UserMessage(text="h" * 2_000),
+        big_send,
+        UserMessage(text="small"),
+    ]
+
+    out = await bridge._fold_messages(payload, target_input_tokens=target)
+
+    assert folds == [("u", 250, 7_000), ("s", 250, 7_000)]
+    assert out[1:3] == payload[1:3]
+    assert out[4] is payload[4]
+    # A fold replaces only the text; the message keeps its identity and source.
+    assert out[0] == replace(big_user, text="folded u")
+    assert out[3] == replace(big_send, text="folded s")
+
+    # A target too small to split still gives each fold at least one token.
+    folds.clear()
+    _ = await bridge._fold_messages(payload[:1], target_input_tokens=1)
+    assert folds == [("u", 1, 7_000)]
+
+
+@pytest.mark.asyncio
+async def test_fold_messages_leaves_a_payload_without_oversized_text_as_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_fold(
+        text: str,
+        *,
+        model: Model,
+        max_tokens: int,
+        call_tokens: int,
+    ) -> str:
+        raise AssertionError(f"folded {text!r} {model} {max_tokens} {call_tokens}")
+
+    monkeypatch.setattr(fold, "fold_text", fake_fold)
+    a = Agent(model=StubModel(), compactor=SummaryCompactor())
+    payload: list[ModelContextEvent] = [
+        AssistantMessage(text="a" * 80_000),
+        UserMessage(text="small"),
+    ]
+
+    out = await _AgentCompactor(SummaryCompactor(), a)._fold_messages(
+        payload,
+        target_input_tokens=1_000,
+    )
+
+    assert out is payload
+
+
+@pytest.mark.asyncio
+async def test_a_request_compaction_cannot_fit_never_reaches_the_provider() -> None:
+    """Only the unfoldable part over the window raises: here, the system prompt.
+
+    The compactor reported ``fallback_reason`` and ``compact_now`` returned
+    True, so the unchanged oversized request was sent -- once proactively,
+    then once per overflow-recovery attempt.
+    """
+    model = StubModel()
+    a = Agent(
+        model=model,
+        system="s" * 40_000,
+        compactor=SummaryCompactor(),
+        budget=AgentSettings(
+            max_request_tokens=8_000,
+            max_response_tokens=1_000,
+            buffer_tokens=1_000,
+        ),
+    )
+
+    with pytest.raises(ContextOverflowError):
+        await a._agent_model.stream(
+            history=[UserMessage(text="hi")],
+            publish=lambda _ev: None,
+        )
+
+    assert model.received == []
 
 
 if __name__ == "__main__":

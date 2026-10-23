@@ -54,6 +54,7 @@ from sagent.agent.state import (
 from sagent.lib.atomic_file import write_all
 from sagent.providers.providers import (
     build_provider_with_account_fallback,
+    provider_class,
 )
 from sagent.sessions import restrict_path
 from sagent.types.cost import TokenCost, TokenCount
@@ -213,7 +214,7 @@ def restore_tool_state(state: ToolState, snapshot: Mapping[str, object]) -> None
     raw_dirs = snapshot.get("additional_dirs")
     if isinstance(raw_dirs, list):
         state.additional_dirs = [
-            str(x) for x in cast(list[object], raw_dirs) if isinstance(x, str)
+            x for x in cast(list[object], raw_dirs) if isinstance(x, str)
         ]
     state.reset_tool_recall()
     raw_rc = snapshot.get("read_cache")
@@ -994,6 +995,18 @@ def restore_model(
     """
     if not meta.provider or not meta.model_id:
         return None
+    # An auth the provider has no constructor for, such as a lease on a person's own
+    # login, is built only by the caller that recorded it, whose next turn sets the
+    # model again: keeping the default here is the expected outcome, not a failure.
+    cls = provider_class(meta.provider)
+    if cls is not None and not hasattr(cls, f"from_{meta.auth}"):
+        logger.info(
+            "Model %s/%s uses auth %r, which only its caller builds; keeping default",
+            meta.provider,
+            meta.model_id,
+            meta.auth,
+        )
+        return None
     try:
         provider, account = build_provider_with_account_fallback(
             meta.provider,
@@ -1301,9 +1314,7 @@ def _splice_from_json(
     paired: frozenset[str] = frozenset[str]()
     if isinstance(raw_paired, list):
         paired = frozenset(
-            str(item)
-            for item in cast(list[object], raw_paired)
-            if isinstance(item, str)
+            item for item in cast(list[object], raw_paired) if isinstance(item, str)
         )
     # ``replay()`` skips both mask-disjointness and payload-pairing
     # validation; legacy sessions converted to splice format may carry
@@ -1371,9 +1382,7 @@ def _legacy_override_to_splice(
     paired: frozenset[str] = frozenset[str]()
     if isinstance(raw_paired, list):
         paired = frozenset(
-            str(item)
-            for item in cast(list[object], raw_paired)
-            if isinstance(item, str)
+            item for item in cast(list[object], raw_paired) if isinstance(item, str)
         )
     return ContextSplice.replay(
         ref=ref,
@@ -1716,9 +1725,7 @@ def _persistent_agent_from_json(
         return None
     raw_tools = record.get("tools")
     tools = (
-        tuple(
-            str(tool) for tool in cast(list[object], raw_tools) if isinstance(tool, str)
-        )
+        tuple(tool for tool in cast(list[object], raw_tools) if isinstance(tool, str))
         if isinstance(raw_tools, list)
         else ()
     )
@@ -2083,23 +2090,22 @@ def _renumber_duplicate_refs(tape: list[TapeRecord]) -> list[TapeRecord]:
         # made the whole session unloadable.
         dataclasses.replace(record, mask=merge_mask_ranges(record.mask + extra))
         if isinstance(record, ContextSplice)
-        and (extra := _mask_for_moved(record, index, moved))
+        and (
+            extra := tuple(
+                (
+                    MaskRange(
+                        session_id=fresh.session_id,
+                        lo=fresh.ordinal,
+                        hi=fresh.ordinal,
+                    )
+                    for original, fresh, record_index in moved
+                    if record_index < index and mask_contains_ref(record.mask, original)
+                ),
+            )
+        )
         else record
         for index, record in kept_at
     ]
-
-
-def _mask_for_moved(
-    splice: ContextSplice,
-    splice_index: int,
-    moved: Sequence[tuple[TapeRef, TapeRef, int]],
-) -> tuple[MaskRange, ...]:
-    """Ranges extending ``splice``'s mask onto records it was written after."""
-    return tuple(
-        MaskRange(session_id=fresh.session_id, lo=fresh.ordinal, hi=fresh.ordinal)
-        for original, fresh, record_index in moved
-        if record_index < splice_index and mask_contains_ref(splice.mask, original)
-    )
 
 
 # Ordinal first, NEVER ``session_id`` first: the resolver anchors each splice against

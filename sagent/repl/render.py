@@ -36,6 +36,7 @@ from sagent.types.exceptions import (
     AuthRefreshError,
     ContextOverflowError,
     UserFacingError,
+    describe,
 )
 from sagent.types.model import (
     ModelTerminationError,
@@ -513,9 +514,7 @@ def error_text(exc: BaseException) -> str:
       text: User-facing exception text.
 
     """
-    return (
-        str(exc) if isinstance(exc, UserFacingError) else f"{type(exc).__name__}: {exc}"
-    )
+    return str(exc) if isinstance(exc, UserFacingError) else describe(exc)
 
 
 def strip_reminders(content: str) -> str:

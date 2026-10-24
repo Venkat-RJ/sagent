@@ -6,7 +6,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
 from typing import TYPE_CHECKING, ClassVar, Final, Self, override
-from urllib import error, request
+from urllib import request
 
 import atexit
 import os
@@ -16,7 +16,7 @@ import socket
 import subprocess
 import time
 
-from sagent.catalog.llamacpp import models
+from sagent.catalog.loader import models
 from sagent.catalog.openai import compatible
 from sagent.catalog.table import ModelCatalog
 from sagent.lib.userdirs import data_dir
@@ -36,7 +36,7 @@ class LlamaCpp(OpenAICompat):
     ENV_VAR: ClassVar[str] = "LLAMA_CPP_API_KEY"
     BASE_URL: ClassVar[str] = "http://127.0.0.1:8081/v1"
 
-    catalog = ModelCatalog(models=models(), transport=compatible())
+    catalog = ModelCatalog(models=models("llamacpp"), transport=compatible())
 
     def __init__(
         self,
@@ -303,7 +303,7 @@ def _http_ok(url: str) -> bool:
     try:
         with request.urlopen(url, timeout=0.2) as response:  # noqa: S310 -- local/provider-supplied readiness URL only.
             return bool(200 <= response.status < 300)
-    except (OSError, error.URLError):
+    except OSError:
         return False
 
 

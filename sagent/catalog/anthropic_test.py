@@ -1,109 +1,213 @@
-"""Anthropic catalog rows, checked against the published docs (2026-10-03)."""
+"""Anthropic transport restrictions and usage accounting."""
 
-from __future__ import annotations
+from datetime import date
 
 import dataclasses
 
 import pytest
 
 from sagent.catalog import anthropic
-from sagent.types.cost import PriceKey, TokenCount, TokenPrice
+from sagent.catalog.loader import models
+from sagent.types.capability import ThinkingBudget
+from sagent.types.cost import PriceKey, TokenCount
 
 
-def test_sonnet_5_5_bills_its_published_card() -> None:
-    """https://platform.claude.com/docs/en/models/sonnet-5-5/overview."""
-    assert anthropic.models()["sonnet-5.5"].prices[PriceKey("auto")] == TokenPrice(
-        request=2.0,
-        response=10.0,
-        cache_write=2.5,
-        cache_write_1h=4.0,
-        cache_read=0.2,
-    )
-
-
-def test_sonnet_5_5_is_the_newest_sonnet() -> None:
-    rows = anthropic.models()
-    assert rows["sonnet-5.5"].wire_model_id == "claude-sonnet-5-5"
-    assert rows["sonnet"].model_id == "sonnet-5.5"
-    assert rows["utility"].model_id == "sonnet-5.5"
-    limits = rows["sonnet-5.5"].context[""]
-    assert (limits.max_request_tokens, limits.max_response_tokens) == (
-        1_000_000,
-        128_000,
-    )
+# Published facts, transcribed from the pages ``assets/anthropic.yaml`` cites
+# (cutoffs and prices 2026-10-21; thinking and fast mode measured against the
+# live API). Structural checks pass through a mistyped number; these do not.
 
 
 @pytest.mark.parametrize(
     ("model_id", "cutoff"),
     [
-        ("sonnet-5.5", "June 2026"),
+        ("fable-5.1", "June 2026"),
+        ("fable-5.0", "January 2026"),
         ("mythos-5.1", "June 2026"),
         ("mythos-5.0", "January 2026"),
+        ("opus-5.5", "June 2026"),
+        ("opus-5.0", "May 2026"),
+        ("opus-4.8", "January 2026"),
+        ("opus-4.7", "January 2026"),
+        ("opus-4.6", "May 2025"),
+        ("opus-4.5", "May 2025"),
+        ("sonnet-5.5", "June 2026"),
+        ("sonnet-5.0", "January 2026"),
+        ("sonnet-4.6", "August 2025"),
+        ("sonnet-4.5", "January 2025"),
+        ("haiku-4.5", "February 2025"),
     ],
 )
-def test_new_rows_state_their_published_cutoff(model_id: str, cutoff: str) -> None:
-    assert anthropic.models()[model_id].knowledge_cutoff == cutoff
+def test_every_row_states_its_published_cutoff(model_id: str, cutoff: str) -> None:
+    assert models("anthropic")[model_id].knowledge_cutoff == cutoff
 
 
 @pytest.mark.parametrize(
-    ("mythos", "fable", "wire"),
+    ("model_id", "rates"),
     [
-        ("mythos-5.1", "fable-5.1", "claude-mythos-5-1"),
-        ("mythos-5.0", "fable-5.0", "claude-mythos-5"),
+        ("fable-5.1", (10.0, 50.0, 12.5, 20.0, 0.25)),
+        ("fable-5.0", (10.0, 50.0, 12.5, 20.0, 1.0)),
+        ("opus-5.5", (4.0, 20.0, 5.0, 8.0, 0.2)),
+        ("opus-5.0", (5.0, 25.0, 6.25, 10.0, 0.5)),
+        ("sonnet-5.5", (2.0, 10.0, 2.5, 4.0, 0.2)),
+        ("sonnet-5.0", (2.0, 10.0, 2.5, 4.0, 0.2)),
+        ("sonnet-4.6", (3.0, 15.0, 3.75, 6.0, 0.3)),
+        ("haiku-5.5", (0.1, 0.5, 0.125, 0.2, 0.01)),
+        ("haiku-4.5", (1.0, 5.0, 1.25, 2.0, 0.1)),
     ],
 )
-def test_mythos_shares_fables_specs_and_prices(
-    mythos: str,
-    fable: str,
-    wire: str,
+def test_a_row_bills_the_published_standard_card(
+    model_id: str,
+    rates: tuple[float, float, float, float, float],
 ) -> None:
-    """Each Mythos overview page: "It shares Claude Fable ...'s specifications"."""
-    rows = anthropic.models()
-    assert rows[mythos].wire_model_id == wire
-    assert rows[mythos].prices == rows[fable].prices
-    assert rows[mythos].context == rows[fable].context
-    assert rows[mythos].thinking == rows[fable].thinking
-    assert "priority" not in rows[mythos].service_tier
+    card = models("anthropic")[model_id].prices[PriceKey("auto")]
+    assert (
+        card.request,
+        card.response,
+        card.cache_write,
+        card.cache_write_1h,
+        card.cache_read,
+    ) == rates
 
 
-def test_mythos_family_resolves_to_its_newest_row() -> None:
-    assert anthropic.models()["mythos"].model_id == "mythos-5.1"
+def test_fast_mode_cache_rates_ride_the_fast_input_rate() -> None:
+    """Cache multipliers apply on top of fast pricing; unscaled ones billed half."""
+    fast = models("anthropic")["opus-5.0"].prices[PriceKey("priority")]
+    assert (fast.request, fast.response) == (10.0, 50.0)
+    assert (fast.cache_write, fast.cache_write_1h, fast.cache_read) == (12.5, 20.0, 1.0)
 
 
-def test_no_row_needs_a_context_beta() -> None:
-    """For every 1M model, "1M is the default: you don't need a beta header"."""
-    for model_id, row in anthropic.models().items():
-        for tag, limits in row.context.items():
-            assert not limits.request_betas, (model_id, tag)
+def test_only_the_fast_mode_opus_models_offer_priority() -> None:
+    """4.7 lost fast mode on 2026-07-24 and 4.6 never had it; both bill standard."""
+    table = models("anthropic")
+    fast = {name for name, row in table.items() if "priority" in row.service_tier}
+    assert fast == {"opus-5.5", "opus-5.0", "opus-4.8"}
 
 
-def test_image_cap_leaves_room_for_base64_under_10_mb() -> None:
-    """The vision page caps 10 MB base64-encoded; the cap applies to raw bytes."""
-    for row in anthropic.models().values():
-        raw = row.context[""].max_image_bytes
-        assert raw == 7_500_000
-        assert -(-raw // 3) * 4 <= 10_000_000
+def test_dated_and_banded_cards_bill_their_published_rates() -> None:
+    table = models("anthropic")
+    sonnet = table["sonnet-5.5"].prices
+    assert (
+        sonnet.rate(
+            service_tier="auto",
+            prompt_tokens=1,
+            at=date(2026, 10, 6),
+        ).cache_read
+        == 0.2
+    )
+    assert (
+        sonnet.rate(
+            service_tier="auto",
+            prompt_tokens=1,
+            at=date(2026, 10, 7),
+        ).cache_read
+        == 0.1
+    )
+    haiku = table["haiku-5.5"].prices
+    at = date(2026, 10, 22)
+    assert haiku.rate(service_tier="auto", prompt_tokens=100_000, at=at).request == 0.1
+    assert haiku.rate(service_tier="auto", prompt_tokens=100_001, at=at).request == 0.5
+
+
+def test_roles_name_the_newest_of_each_tier() -> None:
+    table = models("anthropic")
+    assert {role: table[role].model_id for role in table.roles} == {
+        "best": "fable-5.1",
+        "default": "opus-5.5",
+        "everyday": "sonnet-5.5",
+        "utility": "haiku-5.5",
+    }
+
+
+@pytest.mark.parametrize("model_id", ["fable-5.1", "opus-5.5", "sonnet-5.0"])
+def test_1m_models_serve_1m_and_offer_200k(model_id: str) -> None:
+    context = models("anthropic")[model_id].context
+    assert context.keys() == {"", "+200k"}
+    assert context[""].max_request_tokens == 1_000_000
+    assert context["+200k"].max_request_tokens == 200_000
+    assert context[""].max_response_tokens == 128_000
+
+
+@pytest.mark.parametrize("model_id", ["opus-4.5", "sonnet-4.5", "haiku-4.5"])
+def test_pre_4_6_models_have_only_a_200k_window(model_id: str) -> None:
+    """A 1M row on these 400s; they are 200k / 64k models."""
+    context = models("anthropic")[model_id].context
+    assert context.keys() == {""}
+    assert context[""].max_request_tokens == 200_000
+    assert context[""].max_response_tokens == 64_000
 
 
 @pytest.mark.parametrize(
-    "model_id",
+    ("model_id", "budget"),
     [
-        "fable-5.1",
-        "fable-5.0",
-        "mythos-5.1",
-        "mythos-5.0",
-        "opus-5.5",
-        "opus-5.0",
-        "opus-4.8",
-        "opus-4.7",
-        "sonnet-5.5",
-        "sonnet-5.0",
+        # ``enabled`` 400s from 4.7 on: adaptive only.
+        ("fable-5.1", {"none", "auto"}),
+        ("opus-4.8", {"none", "auto"}),
+        ("opus-4.6", {"none", "auto", "fixed"}),
+        # The 4.5 generation 400s on ``adaptive``.
+        ("opus-4.5", {"none", "fixed"}),
+        ("sonnet-4.5", {"none", "fixed"}),
+        ("haiku-4.5", {"none", "fixed"}),
     ],
 )
-def test_omitted_display_models_still_offer_summarized_text(model_id: str) -> None:
-    """``display`` defaults to omitted here; ``summarized`` opts back in."""
-    output = anthropic.models()[model_id].thinking.output
-    assert output == frozenset({"none", "text", "redacted"})
+def test_each_generation_offers_its_measured_budget_modes(
+    model_id: str,
+    budget: set[ThinkingBudget],
+) -> None:
+    assert models("anthropic")[model_id].thinking.budget == budget
+
+
+def test_xhigh_effort_is_a_4_7_and_later_level() -> None:
+    table = models("anthropic")
+    assert table["fable-5.1"].thinking.effort == {
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    }
+    assert "xhigh" not in table["opus-4.6"].thinking.effort
+
+
+@pytest.mark.parametrize(
+    ("model_id", "edge_px", "chars_per_token"),
+    [
+        ("opus-5.5", 2576, 2.38),
+        ("opus-4.7", 2576, 2.38),
+        ("opus-4.6", 1568, 3.12),
+        ("sonnet-4.5", 1568, 3.12),
+    ],
+)
+def test_image_limits_and_tokenizer_follow_the_generation(
+    model_id: str,
+    edge_px: int,
+    chars_per_token: float,
+) -> None:
+    row = models("anthropic")[model_id]
+    assert row.approx_chars_per_token == chars_per_token
+    for limits in row.context.values():
+        assert limits.max_image_edge_px == edge_px
+        # 10 MB base64-encoded on the wire is 7.5 MB raw.
+        assert limits.max_image_bytes == 7_500_000
+        assert limits.max_request_bytes == 32 * 1024 * 1024
+        assert not limits.request_betas
+
+
+@pytest.mark.parametrize(
+    ("model_id", "wire_id"),
+    [
+        ("fable-5.1", "claude-fable-5-1"),
+        ("mythos-5.1", "claude-mythos-5-1"),
+        ("opus-5.5", "claude-opus-5-5"),
+        ("opus-5.0", "claude-opus-5"),
+        ("sonnet-5.0", "claude-sonnet-5"),
+        ("haiku-4.5", "claude-haiku-4-5"),
+    ],
+)
+def test_catalog_names_map_to_vendor_wire_ids(model_id: str, wire_id: str) -> None:
+    table = models("anthropic")
+    assert table[model_id].wire_model_id == wire_id
+    assert table[wire_id] is table[model_id]
 
 
 def test_the_api_offers_every_knob_and_both_cache_lifetimes() -> None:

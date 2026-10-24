@@ -36,7 +36,8 @@ from treekle import MutablePlainTree, PlainTree, ReadError, from_plain, json_loa
 
 import fastjsonschema
 
-from sagent.catalog.anthropic import cli, models
+from sagent.catalog.anthropic import cli
+from sagent.catalog.loader import models
 from sagent.catalog.table import ModelCatalog
 from sagent.lib.atomic_file import atomic_write_bytes
 from sagent.providers.anthropic.api import Anthropic
@@ -340,7 +341,7 @@ class AnthropicCLI:
     the CLI emits on the terminal ``result`` event.
     """
 
-    catalog = ModelCatalog(models=models(), transport=cli())
+    catalog = ModelCatalog(models=models("anthropic"), transport=cli())
 
     supported_options: ClassVar[frozenset[str]] = frozenset[str]()
     """``from_credentials`` (the CLI wrapper) takes no construction options.
@@ -1696,7 +1697,7 @@ def _dispatch_stream_event(
     """Route one stream_event payload to the runtime ``publish`` sink."""
     event_type = event.get("type")
     if event_type == "content_block_start":
-        idx = int(cast(int, event.get("index") or 0))
+        idx = cast(int, event.get("index") or 0)
         block = cast(dict[str, MutablePlainTree], event.get("content_block") or {})
         if block.get("type") == "thinking":
             thinking_blocks.append(_new_thinking_block())
@@ -1711,7 +1712,7 @@ def _dispatch_stream_event(
         delta = cast(dict[str, MutablePlainTree], event.get("delta") or {})
         delta_type = delta.get("type")
         if delta_type == "input_json_delta":
-            idx = int(cast(int, event.get("index") or 0))
+            idx = cast(int, event.get("index") or 0)
             state = tool_use_blocks.get(idx)
             if state is not None:
                 partial = cast(str, delta.get("partial_json") or "")
@@ -1742,7 +1743,7 @@ def _dispatch_stream_event(
             return
         return
     if event_type == "content_block_stop":
-        idx = int(cast(int, event.get("index") or 0))
+        idx = cast(int, event.get("index") or 0)
         state = tool_use_blocks.pop(idx, None)
         if state is None:
             return

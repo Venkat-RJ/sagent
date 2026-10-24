@@ -125,7 +125,7 @@ def test_an_exact_name_outranks_a_role_of_the_same_spelling() -> None:
 
 
 def test_context_tags_are_the_alias_members_without_the_default() -> None:
-    assert CONTEXT_TAGS == ("+200k", "+272k", "+1m")
+    assert CONTEXT_TAGS == ("+200k", "+272k", "+1m", "+max", "+min")
 
 
 def test_a_prefix_stops_at_a_separator() -> None:
@@ -207,6 +207,51 @@ def test_duplicate_ids_are_rejected() -> None:
         _ = ModelTable(rows=(_opus(), _opus()))
 
 
+@pytest.mark.parametrize(
+    "ids",
+    [
+        ("opus-4.8", "opus-5.0"),
+        ("opus-5.0", "sonnet-5.5", "opus-5.5"),
+        ("opus-5.9", "opus-5.10"),
+    ],
+)
+def test_rows_listed_oldest_first_are_rejected(ids: tuple[str, ...]) -> None:
+    """``opus`` would otherwise name the older row and misprice every request."""
+    with pytest.raises(ValueError, match="newest-first"):
+        _ = ModelTable(rows=tuple(_opus(i) for i in ids))
+
+
+def test_a_caller_supplied_unversioned_id_is_an_exact_name_only() -> None:
+    """A local endpoint's ``local-model`` has no family to order or prefix."""
+    table = ModelTable(rows=(_opus("local-model"), _opus("local-model-b")))
+    assert table["local-model"].model_id == "local-model"
+    assert table["local-model-b"].model_id == "local-model-b"
+
+
+def test_best_and_everyday_fall_back_to_default_when_undeclared() -> None:
+    """A vendor with nothing above or below its default still answers both."""
+    table = _table()
+    assert table["best"].model_id == "opus-5.5"
+    assert table["everyday"].model_id == "opus-5.5"
+    assert table.roles["best"] == table.roles["everyday"] == "opus"
+
+
+def test_a_declared_best_or_everyday_outranks_the_fallback() -> None:
+    table = ModelTable(
+        rows=(_opus("opus-5.5"), _opus("sonnet-5.5")),
+        roles={"best": "opus", "default": "opus", "everyday": "sonnet"},
+    )
+    assert table["everyday"].model_id == "sonnet-5.5"
+    assert table["best"].model_id == "opus-5.5"
+
+
+def test_without_a_default_nothing_falls_back() -> None:
+    table = ModelTable(rows=(_opus(),))
+    assert "best" not in table
+    assert "everyday" not in table
+    assert dict(table.roles) == {}
+
+
 def test_roles_are_frozen() -> None:
     roles = {"default": "opus"}
     table = ModelTable(rows=(_opus(),), roles=roles)
@@ -239,7 +284,61 @@ def test_split_model_id(model_id: str, base: str, tags: frozenset[ContextTag]) -
 
 def test_context_tags_derive_from_the_literal() -> None:
     """A tag the type admits but the tuple omits would be unparseable."""
-    assert set(CONTEXT_TAGS) == {"+1m", "+272k", "+200k"}
+    assert set(CONTEXT_TAGS) == {"+1m", "+272k", "+200k", "+max", "+min"}
+
+
+@pytest.mark.parametrize("alias", ["+max", "+min", "+MAX", "+MIN"])
+def test_split_context_extreme_aliases(alias: str) -> None:
+    assert split_model_id("opus-4.8" + alias) == (
+        "opus-4.8",
+        frozenset({alias.lower()}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("alias", "default_tokens", "tagged_tokens", "expected"),
+    [
+        ("+max", 200_000, 1_000_000, "+1m"),
+        ("+min", 200_000, 1_000_000, ""),
+        ("+max", 1_000_000, 200_000, ""),
+        ("+min", 1_000_000, 200_000, "+1m"),
+        ("+max", 200_000, 200_000, "+1m"),
+        ("+min", 200_000, 200_000, "+1m"),
+    ],
+)
+def test_extreme_alias_selects_existing_context_by_token_limit(
+    alias: str,
+    default_tokens: int,
+    tagged_tokens: int,
+    expected: ContextTag,
+) -> None:
+    row = replace(
+        _opus(),
+        context=MappingProxyType(
+            {
+                "+1m": ModelLimits(max_request_tokens=tagged_tokens),
+                "": ModelLimits(max_request_tokens=default_tokens),
+            },
+        ),
+    )
+    capability, settings = _resolve("opus-4.8" + alias, rows=(row,))
+    assert settings.context == expected
+    assert settings.limits == row.context[expected]
+    assert tuple(capability.context.items()) == tuple(row.context.items())
+
+
+@pytest.mark.parametrize("alias", ["+max", "+min"])
+def test_extreme_alias_selects_sole_context(alias: str) -> None:
+    row = replace(_opus(), context=MappingProxyType({"": ModelLimits()}))
+    capability, settings = _resolve("opus-4.8" + alias, rows=(row,))
+    assert settings.context == ""
+    assert tuple(capability.context.items()) == tuple(row.context.items())
+
+
+@pytest.mark.parametrize("suffix", ["+max+min", "+max+1m", "+200k+min"])
+def test_extreme_alias_conflicts_with_other_context_tags(suffix: str) -> None:
+    with pytest.raises(UnsupportedTagError, match="conflicting contexts"):
+        _resolve("opus-4.8" + suffix)
 
 
 # ---- ModelCatalog.resolve --------------------------------------------------
@@ -341,7 +440,7 @@ def test_resolve_names_the_known_models_and_roles_on_a_miss() -> None:
         _ = catalog.resolve("nope")
     assert str(raised.value) == (
         "Unknown model 'nope'. Known models: opus-5.5, opus-5.0, opus-4.8,"
-        " sonnet-5.5, sonnet-5.0, sonnet-4.6, default, utility"
+        " sonnet-5.5, sonnet-5.0, sonnet-4.6, default, utility, best, everyday"
     )
 
 

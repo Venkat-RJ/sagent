@@ -58,7 +58,8 @@ else:
 
 from treekle import MutablePlainTree, from_plain, mutable
 
-from sagent.catalog.anthropic import api, models, usage_tokens
+from sagent.catalog.anthropic import api, usage_tokens
+from sagent.catalog.loader import models
 from sagent.catalog.table import ModelCatalog
 from sagent.lib import debug_log
 from sagent.providers.lib.errors import (
@@ -200,7 +201,7 @@ class Anthropic:
     ``handle_auth_error``, ``subscription``.
     """
 
-    catalog = ModelCatalog(models=models(), transport=api())
+    catalog = ModelCatalog(models=models("anthropic"), transport=api())
 
     def __init__(
         self,
@@ -336,7 +337,14 @@ class Anthropic:
         async with self._lock.get():
             sdk = self._sdks.get()
             if sdk is None:
-                sdk = anthropic.AsyncAnthropic(api_key=self._api_key)
+                sdk = anthropic.AsyncAnthropic(
+                    api_key=self._api_key,
+                    # ``send_with_retry`` owns retries: the SDK's two more made
+                    # one stalled attempt three 30s connects.
+                    max_retries=0,
+                    # The SDK's 5s connect default fails on one Wi-Fi stall.
+                    timeout=httpx2.Timeout(_STREAM_IDLE_TIMEOUT, connect=30.0),
+                )
                 self._sdks.set(sdk)
             return sdk
 
@@ -667,7 +675,7 @@ class _AnthropicModel(ModelDefaults):
         for k in ("max_tokens", "temperature", "stop_sequences", "service_tier"):
             kwargs.pop(k, None)
         try:
-            result = await sdk.messages.count_tokens(**kwargs)  # pyright: ignore[reportArgumentType] -- SDK overload omits dynamic kwargs.  # ty: ignore[invalid-argument-type] -- SDK overload cannot model validated dynamic kwargs.
+            result = await sdk.messages.count_tokens(**kwargs)  # pyright: ignore[reportArgumentType] -- SDK overload omits dynamic kwargs.  # ty: ignore[invalid-argument-type] -- SDK overload cannot model validated dynamic kwargs.  # pyrefly: ignore[bad-argument-type] -- SDK overload cannot model validated dynamic kwargs.
         except anthropic.AuthenticationError:
             await self._provider.handle_auth_error(failed=sdk)
             sdk = await self._provider.get_sdk()
@@ -676,7 +684,7 @@ class _AnthropicModel(ModelDefaults):
                 messages,
                 cache_ttl=self._cache_ttl_wire(),
             )
-            result = await sdk.messages.count_tokens(**kwargs)  # pyright: ignore[reportArgumentType] -- SDK overload omits dynamic kwargs.  # ty: ignore[invalid-argument-type] -- SDK overload cannot model validated dynamic kwargs.
+            result = await sdk.messages.count_tokens(**kwargs)  # pyright: ignore[reportArgumentType] -- SDK overload omits dynamic kwargs.  # ty: ignore[invalid-argument-type] -- SDK overload cannot model validated dynamic kwargs.  # pyrefly: ignore[bad-argument-type] -- SDK overload cannot model validated dynamic kwargs.
         return result.input_tokens
 
     def is_context_overflow(self, error: Exception) -> bool:
@@ -871,7 +879,7 @@ class _AnthropicModel(ModelDefaults):
             model=self.capability.model_id,
             roles=debug_log.role_sequence(messages),
             n_messages=len(messages),
-            n_tools=len(kwargs.get("tools") or []),  # pyright: ignore[reportArgumentType] -- kwargs is dynamically assembled.  # ty: ignore[invalid-argument-type] -- kwargs.tools is validated as a list at runtime.
+            n_tools=len(request.tools),
             thinking=kwargs.get("thinking"),
             speed=extra_body.get("speed"),
             fast_beta=_FAST_MODE_BETA in extra_headers.get("anthropic-beta", ""),
@@ -1006,7 +1014,7 @@ async def _raw_message_stream(
     # its own streams the same alias (``_response._parse`` unwraps ``Annotated``
     # before use), so narrowing this to one member class would break decoding.
     stream: AsyncStream[RawMessageStreamEvent] = AsyncStream(  # pyright: ignore[reportUnknownVariableType] -- the Annotated `cast_to` leaves `_T` unsolved.
-        cast_to=anthropic.types.RawMessageStreamEvent,  # ty: ignore[invalid-argument-type] -- SDK alias is Annotated[...], not type[_T]; unwrapped at runtime  # pyright: ignore[reportArgumentType] -- SDK alias is unwrapped by the SDK at runtime.
+        cast_to=anthropic.types.RawMessageStreamEvent,  # ty: ignore[invalid-argument-type] -- SDK alias is Annotated[...], not type[_T]; unwrapped at runtime.  # pyright: ignore[reportArgumentType] -- SDK alias is unwrapped by the SDK at runtime.  # pyrefly: ignore[bad-argument-type] -- SDK alias is Annotated[...], not type[_T]; unwrapped at runtime.
         response=response,
         client=sdk,
     )
@@ -1127,6 +1135,8 @@ def _build_messages(
             # role=user wire message that holds the pending tool_results.
             # Emitting a separate role=user message breaks Anthropic's
             # strict alternation and triggers HTTP 400.
+            if isinstance(entry, UserMessage) and entry.cache_point and blocks:
+                blocks[-1] = {**blocks[-1], "cache_control": _cache_mark(cache_ttl)}
             if pending_tool_results:
                 pending_tool_results.extend(blocks)
                 _flush_tool_results(messages, pending_tool_results)

@@ -516,7 +516,7 @@ def test_model_resolves_context_tag_to_profile() -> None:
     provider = AnthropicCLI()
     model = provider.model("sonnet-4.6+200k")
     assert model.tagged_model_id == "sonnet-4.6+200k"
-    assert model.limits.max_request_tokens == 200_000
+    assert model.limits == provider.catalog.models["sonnet-4.6"].context["+200k"]
 
 
 def test_model_rejects_an_unknown_tag() -> None:
@@ -530,17 +530,20 @@ def test_catalog_inherits_from_anthropic() -> None:
     assert tuple(AnthropicCLI.catalog.models) == tuple(Anthropic.catalog.models)
 
 
-def test_utility_model_picks_latest_sonnet() -> None:
+def test_utility_model_resolves_role() -> None:
     provider = AnthropicCLI()
     model = provider.model("utility")
-    assert model.capability.model_id == "sonnet-5.5"
+    assert model.capability.model_id == provider.catalog.models["utility"].model_id
 
 
 def test_model_capabilities() -> None:
     """The CLI transport narrows the row it inherits from the API."""
     provider = AnthropicCLI()
     model = provider.model("claude-sonnet-4-5")
-    assert model.capability.thinking.budget != frozenset({"none"})
+    assert (
+        model.capability.thinking.budget
+        == provider.catalog.models["claude-sonnet-4-5"].thinking.budget
+    )
     assert model.capability.thinking.effort == frozenset({"none"})
     assert model.capability.cache_ttl_sec == frozenset({0.0})
     assert model.capability.manage_context_server_side == frozenset({True})
@@ -1174,7 +1177,7 @@ async def test_session_persistent_stream_returns_empty_when_history_cleared(
     # Provider state was reset: next real call will use ``--session-id``
     # (not ``--resume``).
     assert model._last_sent_index == 0
-    assert model._session_on_disk is False
+    assert model._session_on_disk is False  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
 
     # The stale on-disk JSONL was removed so the next ``--session-id``
     # spawn doesn't error with "Session ID is already in use".
@@ -1528,11 +1531,11 @@ def test_clear_drops_pending_detached_buffer() -> None:
     model = provider.model("claude-haiku-4-5", session_id="sess-clear-detached")
     model._pending_detached_text = "[detached tool result] staged"
     model._reset_for_clear()
-    assert model._pending_detached_text is None, "session clear must drop the buffer"
+    assert model._pending_detached_text is None, "session clear must drop the buffer"  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
 
     model._pending_detached_text = "[detached tool result] staged"
     model._reset_active_state()
-    assert model._pending_detached_text is None, "respawn must drop the buffer"
+    assert model._pending_detached_text is None, "respawn must drop the buffer"  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
 
 
 @pytest.mark.asyncio
@@ -2790,7 +2793,7 @@ async def test_stateless_stream_cancelled_interrupts_and_reraises(
     with pytest.raises(asyncio.CancelledError):
         await model.stream(request)
 
-    assert interrupted is True, "stream() must SIGINT the active proc on cancel"
+    assert interrupted is True, "stream() must SIGINT the active proc on cancel"  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
     assert respawn_count == 1, "stream() must respawn after a cancelled turn"
     assert model._last_sent_index == 0
 
@@ -2838,8 +2841,8 @@ async def test_session_persistent_stream_cancelled_interrupts_and_reraises(
     with pytest.raises(asyncio.CancelledError):
         await model.stream(request)
 
-    assert interrupted is True, "session stream must SIGINT the active proc on cancel"
-    assert closed is True, "session stream must close the proc on cancel"
+    assert interrupted is True, "session stream must SIGINT the active proc on cancel"  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
+    assert closed is True, "session stream must close the proc on cancel"  # pyrefly: ignore[unnecessary-comparison] -- pyrefly keeps the pre-call narrowing; the call mutates this state.
     assert model._active_proc is None
 
 
@@ -2905,7 +2908,7 @@ async def test_session_persistent_two_turns_mint_then_resume(
             return {
                 "type": "result",
                 "stop_reason": "end_turn",
-                "modelUsage": {},
+                "modelUsage": dict[str, object](),
                 "session_id": "s",
             }
 

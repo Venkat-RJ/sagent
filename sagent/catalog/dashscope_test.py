@@ -1,21 +1,13 @@
-"""DashScope catalog rows against Model Studio's published tables (2026-10-03)."""
-
-from __future__ import annotations
+"""DashScope thinking-budget wire values and Model Studio's published rows."""
 
 from datetime import date
-from typing import TYPE_CHECKING
 
 import pytest
 
 from sagent.catalog import dashscope
+from sagent.catalog.loader import models
+from sagent.types.capability import ThinkingBudget, ThinkingEffort
 from sagent.types.cost import PriceKey
-
-
-if TYPE_CHECKING:
-    from sagent.types.capability import ThinkingEffort
-
-
-_TODAY = date(2026, 10, 3)
 
 
 @pytest.mark.parametrize(
@@ -44,11 +36,11 @@ def test_a_prompt_bills_its_whole_band(
     prompt_tokens: int,
     published: tuple[float, float],
 ) -> None:
-    """Every token in a request bills at its tier's rate (model-pricing)."""
-    price = dashscope.models()[model_id].prices.rate(
+    """Every token in a request bills at its band's rate (model-pricing)."""
+    price = models("dashscope")[model_id].prices.rate(
         service_tier="auto",
         prompt_tokens=prompt_tokens,
-        at=_TODAY,
+        at=date(2026, 10, 22),
     )
     assert (price.request, price.response) == published
 
@@ -57,6 +49,7 @@ def test_a_prompt_bills_its_whole_band(
     ("model_id", "cache_read"),
     [
         ("qwen-plus-3.7", 0.08),
+        ("qwen-flash-3.7", 0.006),
         ("qwen-turbo-3.0", 0.01),
         # Unpublished (console only): billed at the input rate.
         ("qwen-max-3.8", 2.0),
@@ -65,21 +58,23 @@ def test_a_prompt_bills_its_whole_band(
     ],
 )
 def test_cache_hits_bill_the_published_rate(model_id: str, cache_read: float) -> None:
-    price = dashscope.models()[model_id].prices[PriceKey("auto")]
-    assert price.cache_read == pytest.approx(cache_read)
+    assert models("dashscope")[model_id].prices[PriceKey("auto")].cache_read == (
+        cache_read
+    )
 
 
 def test_roles_name_the_vendor_recommendations() -> None:
-    rows = dashscope.models()
-    assert rows["default"].model_id == "qwen-plus-3.7"
-    assert rows["utility"].model_id == "qwen-flash-3.8"
+    table = models("dashscope")
+    assert table["default"].model_id == "qwen-plus-3.7"
+    assert table["utility"].model_id == "qwen-flash-3.8"
+    assert table["qwen-max"].model_id == "qwen-max-3.8"
 
 
 def test_qwen_3_8_takes_its_effort_as_a_level() -> None:
-    rows = dashscope.models()
-    assert rows["qwen-max-3.8"].effort_as_level
-    assert rows["qwen-max-3.8"].thinking.effort == {"none", "low", "medium", "xhigh"}
-    assert not rows["qwen-plus-3.7"].effort_as_level
+    table = models("dashscope")
+    assert table["qwen-max-3.8"].effort_as_level
+    assert table["qwen-max-3.8"].thinking.effort == {"none", "low", "medium", "xhigh"}
+    assert not table["qwen-plus-3.7"].effort_as_level
 
 
 @pytest.mark.parametrize(
@@ -89,14 +84,15 @@ def test_qwen_3_8_takes_its_effort_as_a_level() -> None:
         ("qwen-2400b-a95b-3.8", {"auto"}),
         ("qwen-235b-a22b-thinking-3.0", {"auto", "fixed"}),
         ("qwen-235b-a22b-instruct-3.0", {"none"}),
+        ("qwen-coder-480b-a35b-3.0", {"none"}),
     ],
 )
 def test_thinking_switches_match_the_published_modes(
     model_id: str,
-    budget: set[str],
+    budget: set[ThinkingBudget],
 ) -> None:
     """``qwen-turbo`` is hybrid; ``-thinking`` ids reject the off switch."""
-    assert dashscope.models()[model_id].thinking.budget == budget
+    assert models("dashscope")[model_id].thinking.budget == budget
 
 
 @pytest.mark.parametrize(
@@ -110,13 +106,9 @@ def test_thinking_switches_match_the_published_modes(
     ],
 )
 def test_vendor_ids_resolve_to_their_rows(model_id: str, wire_id: str) -> None:
-    rows = dashscope.models()
-    assert rows[model_id].wire_model_id == wire_id
-    assert rows[wire_id].model_id == model_id
-
-
-def test_a_bare_family_names_its_newest_row() -> None:
-    assert dashscope.models()["qwen-max"].model_id == "qwen-max-3.8"
+    table = models("dashscope")
+    assert table[model_id].wire_model_id == wire_id
+    assert table[wire_id] is table[model_id]
 
 
 @pytest.mark.parametrize(

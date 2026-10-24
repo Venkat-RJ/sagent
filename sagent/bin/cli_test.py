@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Final, cast
+from typing import TYPE_CHECKING, ClassVar, Final, Unpack, cast
+from typing_extensions import TypedDict
 
 import argparse
 import asyncio
@@ -17,6 +18,7 @@ import subprocess
 import sys
 
 from treekle import ReadError
+from wesearch.fetch import FetchSession
 
 import pytest
 
@@ -145,8 +147,24 @@ class _ChildStubModel(MockModelCaps):
     supports_thinking: bool = True
 
 
-def _child_record(**overrides: object) -> PersistentAgentRecord:
-    record = PersistentAgentRecord(
+class _PersistentAgentRecordFields(TypedDict, total=False, closed=True):
+    """The ``PersistentAgentRecord`` fields a test overrides."""
+
+    account: str | None
+    frozen_system: bool
+    label: str
+    max_request_tokens: int | None
+    max_response_tokens: int | None
+    session_dir: str
+    show_thinking: bool
+    thinking_budget: str
+    thinking_output: str
+
+
+def _child_record(
+    **overrides: Unpack[_PersistentAgentRecordFields],
+) -> PersistentAgentRecord:
+    built = PersistentAgentRecord(
         label="fix-tools",
         run_id="run-1",
         session_dir="",
@@ -159,7 +177,7 @@ def _child_record(**overrides: object) -> PersistentAgentRecord:
         system="system text",
         notify_on_asleep=True,
     )
-    return dataclasses.replace(record, **overrides)
+    return dataclasses.replace(built, **overrides)
 
 
 def _stub_build_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1022,6 +1040,22 @@ def test_resolve_tools_known_subset_includes_bash() -> None:
     # Bash is constructed last regardless of position; the order in
     # ``names`` follows the request order.
     assert names == ["Read", "Bash"]
+
+
+def test_resolve_tools_gives_every_web_tool_one_session() -> None:
+    names = [
+        "WebFetch",
+        "WebSearch",
+        "PaperSearch",
+        "PaperDetails",
+        "PaperAuthor",
+        "PaperFetch",
+    ]
+    sessions = [getattr(t, "session", None) for t in resolve_tools(names)]
+    assert isinstance(sessions[0], FetchSession)
+    assert all(s is sessions[0] for s in sessions)
+    other = resolve_tools(["WebFetch"])[0]
+    assert getattr(other, "session", None) is not sessions[0]
 
 
 def test_last_assistant_text_empty() -> None:

@@ -64,6 +64,7 @@ from sagent.tools.core import (
 )
 from sagent.types.capability import ThinkingEffort
 from sagent.types.cost import ServiceTier
+from sagent.types.exceptions import describe
 from sagent.types.model import Model, ModelRecipe
 from sagent.types.providers import Provider
 from sagent.types.runtime import (
@@ -89,7 +90,7 @@ from sagent.types.runtime import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import Callable, Generator, Mapping
     from pathlib import Path
 
     from sagent.types.compactor import Compactor
@@ -127,6 +128,11 @@ class AgentSpawn:
     ``tool_results`` bounds each child's tool results; a child inherits its
     compactor from the parent but not this policy, so a host that caps its own
     results passes the same policy here.
+
+    ``build_provider`` builds each child's provider from the resolved
+    ``(provider, auth, account)`` instead of sagent's registry; a host whose
+    children must share its own credentials passes one, and its ``ValueError``
+    refuses the spawn with the error as the result.
     """
 
     name: str = "AgentSpawn"
@@ -150,9 +156,11 @@ class AgentSpawn:
         verbosity: int = 1,
         allow_providers: tuple[str, ...] | None = None,
         tool_results: ToolResultPolicy | None = None,
+        build_provider: Callable[[str, str, str | None], Provider] | None = None,
     ) -> None:
         if account == "":
             raise ValueError("account cannot be empty; pass None to inherit.")
+        self._build_provider = build_provider
         self._provider = provider
         self._auth = auth
         self._model_id = model_id
@@ -934,17 +942,20 @@ class AgentSpawn:
                 parent_provider,
             )
         try:
-            built_provider, ac = build_provider_with_account_fallback(
-                p,
-                a,
-                account=ac,
-                fallback_to_default=(
-                    account is None
-                    and self._account is None
-                    and parent_spec is not None
-                    and p != parent_spec.provider
-                ),
-            )
+            if self._build_provider is not None:
+                built_provider = self._build_provider(p, a, ac)
+            else:
+                built_provider, ac = build_provider_with_account_fallback(
+                    p,
+                    a,
+                    account=ac,
+                    fallback_to_default=(
+                        account is None
+                        and self._account is None
+                        and parent_spec is not None
+                        and p != parent_spec.provider
+                    ),
+                )
         except (AttributeError, FileNotFoundError, RuntimeError, ValueError) as exc:
             return _build_failed(m, exc)
         try:
@@ -1171,10 +1182,7 @@ class _ChildForwarder:
             self._parent_agent.runtime.inbox.push_back(
                 AgentSendMessage(
                     source=self._label,
-                    text=(
-                        f"[{self._label} failed] "
-                        f"{type(event.exception).__name__}: {event.exception}"
-                    ),
+                    text=f"[{self._label} failed] {describe(event.exception)}",
                 ),
             )
         if isinstance(event, AgentIdle) and self._notify_on_asleep:
@@ -1540,7 +1548,7 @@ def _child_error_result(label: str, error: BaseException) -> ToolResult:
     """Report a child's terminal model error as the spawn's error result."""
     return ToolResult(
         call_id="",
-        content=f"Child agent {label!r} failed: {type(error).__name__}: {error}",
+        content=f"Child agent {label!r} failed: {describe(error)}",
         is_error=True,
     )
 

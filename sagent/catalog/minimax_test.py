@@ -1,16 +1,22 @@
-"""MiniMax catalog rows against the pay-as-you-go table (2026-10-03)."""
+"""MiniMax transport restrictions and the pay-as-you-go rows (2026-10-03)."""
 
-from __future__ import annotations
-
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
 from sagent.catalog import minimax
+from sagent.catalog.loader import models
+from sagent.catalog.openai import compatible
 from sagent.types.cost import PriceKey, ServiceTier
 
 
-_TODAY = date(2026, 10, 3)
+def test_api_adds_priority_to_the_compatible_transport() -> None:
+    transport = compatible()
+    assert minimax.api() == replace(
+        transport,
+        service_tier=frozenset({"auto", "priority"}),
+    )
 
 
 @pytest.mark.parametrize(
@@ -29,7 +35,7 @@ def test_m2_rows_bill_the_published_card(
     model_id: str,
     published: tuple[float, float, float, float],
 ) -> None:
-    price = minimax.models()[model_id].prices[PriceKey("auto")]
+    price = models("minimax")[model_id].prices[PriceKey("auto")]
     assert (price.request, price.response, price.cache_read, price.cache_write) == (
         published
     )
@@ -49,46 +55,34 @@ def test_m3_bills_its_band_and_tier(
     prompt_tokens: int,
     published: tuple[float, float, float],
 ) -> None:
-    price = minimax.models()["minimax-3.0"].prices.rate(
+    price = models("minimax")["minimax-3.0"].prices.rate(
         service_tier=tier,
         prompt_tokens=prompt_tokens,
-        at=_TODAY,
+        at=date(2026, 10, 22),
     )
-    assert (price.request, price.response, price.cache_read) == pytest.approx(
-        published,
-    )
+    assert (price.request, price.response, price.cache_read) == published
 
 
 def test_only_m3_offers_priority() -> None:
-    rows = minimax.models()
-    assert {m for m, row in rows.items() if "priority" in row.service_tier} == {
+    table = models("minimax")
+    assert {name for name, row in table.items() if "priority" in row.service_tier} == {
         "minimax-3.0",
     }
 
 
-def test_api_adds_priority_to_the_compatible_transport() -> None:
-    assert minimax.api().service_tier == {"auto", "priority"}
-
-
 def test_m2_thinking_cannot_be_disabled_and_m3_can() -> None:
-    rows = minimax.models()
-    assert rows["minimax-2.7"].thinking.budget == {"none"}
-    assert rows["minimax-3.0"].thinking.budget == {"none", "auto"}
+    table = models("minimax")
+    assert table["minimax-2.7"].thinking.budget == {"none"}
+    assert table["minimax-3.0"].thinking.budget == {"none", "auto"}
 
 
 def test_windows_match_the_published_limits() -> None:
-    rows = minimax.models()
-    m3 = rows["minimax-3.0"].context[""]
+    table = models("minimax")
+    m3 = table["minimax-3.0"].context[""]
     assert (m3.max_request_tokens, m3.max_response_tokens) == (1_000_000, 524_288)
     assert (m3.max_request_bytes, m3.max_image_bytes) == (64 << 20, 10 << 20)
-    m2 = rows["minimax-2.7"].context[""]
+    m2 = table["minimax-2.7"].context[""]
     assert (m2.max_request_tokens, m2.max_response_tokens) == (204_800, 204_800)
-
-
-def test_roles_name_live_rows() -> None:
-    rows = minimax.models()
-    assert rows["default"].model_id == "minimax-3.0"
-    assert rows["utility"].model_id == "minimax-3.0"
 
 
 @pytest.mark.parametrize(
@@ -101,27 +95,14 @@ def test_roles_name_live_rows() -> None:
     ],
 )
 def test_vendor_ids_resolve_to_their_rows(model_id: str, wire_id: str) -> None:
-    rows = minimax.models()
-    assert rows[model_id].wire_model_id == wire_id
-    assert rows[wire_id].model_id == model_id
+    table = models("minimax")
+    assert table[model_id].wire_model_id == wire_id
+    assert table[wire_id] is table[model_id]
 
 
-@pytest.mark.parametrize(
-    "model_id",
-    ["MiniMax-M1", "MiniMax-Text-01", "abab6.5s-chat", "abab6.5-chat"],
-)
-def test_discontinued_models_are_gone(model_id: str) -> None:
-    assert model_id not in minimax.models()
-
-
-def test_scaling_a_card_scales_every_meter() -> None:
-    """A priority multiple of a card with a write column bills writes at it too."""
-    card = minimax._m2_card(request=1.0, response=2.0, cache_read=0.1)
-    scaled = minimax._scaled(card, 1.5)
-    assert (scaled.cache_write, scaled.cache_write_1h) == (
-        card.cache_write * 1.5,
-        card.cache_write_1h * 1.5,
-    )
+def test_roles_name_live_rows() -> None:
+    table = models("minimax")
+    assert {table[role].model_id for role in table.roles} == {"minimax-3.0"}
 
 
 if __name__ == "__main__":

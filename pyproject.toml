@@ -3,7 +3,7 @@
 
 [project]
 name = "sagent"
-version = "0.1.19"
+version = "0.1.20"
 description = "Python-first Coding Agent API and CLI."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,7 +22,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "treekle>=0.1.0",
+    # Prefer https://awesome-python.com deps over alternatives.
+    "treekle>=0.3.1",
     # media
     "imagesize>=1.4",
     "pillow",
@@ -41,8 +42,8 @@ dependencies = [
     "tiktoken>=0.12.0",
     # web client / scraping
     "httpx2>=2.12",
-    # 0.1.11 for `wesearch.fetch.custom_types` (WebFetch) and
-    # `wesearch.search.render` (WebSearch); neither exists in 0.1.10.
+    # 0.1.11 for the WebFetch/WebSearch parameter schemas (now
+    # `wesearch.mcp.types`) and `wesearch.search.render`.
     "wesearch>=0.1.11",
     # web server / api
     "uvicorn>=0.30.0",
@@ -75,6 +76,56 @@ dependencies = [
     "rignore>=0.8.1",
 ]
 
+[project.scripts]
+sagent = "sagent.bin.cli:main"
+sagent-slack = "sagent.bin.slack:main"
+
+[dependency-groups]
+# NEVER ADD MORE DEPENDENCIES!
+
+debug = [
+    "ipython",
+    "tqdm",
+]
+lint = [
+    "codespell>=2.2.4",
+    "ruff",
+]
+test = [
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "pytest>=7.0",
+    "hypothesis>=6.155.1",
+    "pytest-cov",
+    "pytest-asyncio>=1.3.0",
+]
+typecheck = [
+    "basedpyright>=1.40.1",
+    "pyrefly>=1.4.0",
+    "ty>=0.0.84",
+    "rekursiv-ai-typings>=0.1.6",
+]
+"pre-commit" = [
+    "pre-commit>=4.6",
+    {include-group = "lint"},
+    {include-group = "test"},
+    {include-group = "typecheck"},
+]
+dev = [
+    {include-group = "debug"},
+    {include-group = "pre-commit"},
+]
+
+# NEVER ADD MORE DEPENDENCY GROUPS!
+
+[project.urls]
+Homepage = "https://www.rekursiv.ai"
+Repository = "https://github.com/rekursiv-ai/sagent"
+Documentation = "https://github.com/rekursiv-ai/sagent/tree/main/docs"
+Source = "https://github.com/rekursiv-ai/sagent"
+Issues = "https://github.com/rekursiv-ai/sagent/issues"
+Changelog = "https://github.com/rekursiv-ai/sagent/releases"
+
 [project.optional-dependencies]
 # The `sagent-slack` entrypoint (bin/slack.py) is the only slack_sdk consumer
 # and is not reached by `import sagent` or the main CLI, so its deps are opt-in.
@@ -94,59 +145,10 @@ selfhosted = [
     "protobuf",
     "safetensors",
     "sentencepiece",
-    "torch==2.11.0",
-    "torchvision==0.26.0",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
     "transformers>=5.8.0",
 ]
-
-[dependency-groups]
-# NEVER ADD MORE DEPENDENCIES!
-
-debug = [
-    "ipython",
-]
-lint = [
-    "codespell>=2.2.4",
-    "ruff",
-]
-test = [
-    "pytest-timeout>=2.4.0",
-    "pytest-xdist>=3.8.0",
-    "pytest>=7.0",
-    "hypothesis>=6.155.1",
-    "pytest-cov",
-    "pytest-asyncio>=1.3.0",
-]
-typecheck = [
-    "basedpyright>=1.40.1",
-    "ty>=0.0.84",
-    "rekursiv-ai-typeshed",
-    "hatchling>=1.32.4",  # packages/rekursiv-ai-typeshed/rekursiv_ai_typeshed/hatch_build.py subscripts its one-parameter BuildHookInterface.
-]
-"pre-commit" = [
-    "pre-commit>=4.6",
-    {include-group = "lint"},
-    {include-group = "test"},
-    {include-group = "typecheck"},
-]
-dev = [
-    {include-group = "debug"},
-    {include-group = "pre-commit"},
-]
-
-# NEVER ADD MORE DEPENDENCY GROUPS!
-
-[project.scripts]
-sagent = "sagent.bin.cli:main"
-sagent-slack = "sagent.bin.slack:main"
-
-[project.urls]
-Homepage = "https://www.rekursiv.ai"
-Repository = "https://github.com/rekursiv-ai/sagent"
-Documentation = "https://github.com/rekursiv-ai/sagent/tree/main/docs"
-Source = "https://github.com/rekursiv-ai/sagent"
-Issues = "https://github.com/rekursiv-ai/sagent/issues"
-Changelog = "https://github.com/rekursiv-ai/sagent/releases"
 
 [build-system]
 requires = ["hatchling"]
@@ -164,7 +166,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["sagent"]
-exclude = ["**/*_test.py", "**/conftest.py"]
+# The vendored pytest harness imports pytest, a test-group dependency, and the
+# Ctrl+D repro drives agent_test's stub model, which the wheel never ships.
+exclude = ["**/*_test.py", "**/conftest.py", "sagent/lib/testing/**", "sagent/scripts/repro_ctrld_hang.py"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [".github/**", ".codespell-ignore"]
@@ -288,7 +292,9 @@ omit = [
     "*/tests/*",
     "*/.venv/*",
     "*/typings/*",
-    "*/tools/*",
+    "*/scripts/*",
+    "*/testdata/*",
+    "*/__main__.py",
 ]
 
 [tool.coverage.report]
@@ -297,6 +303,7 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
+    "^\\s*\\.\\.\\.$",
     # Convention: a ``_triton``-suffixed def is a body ``triton.jit`` compiles
     # from its source text to PTX. The Python bytecode never runs, so the
     # tracer cannot see lines a GPU test executed; the kernel is tested by
@@ -333,26 +340,6 @@ extend-include = ["*.ipynb"]
 # NEVER ADD MORE SUPPRESSIONS! SUPPRESS IN FILE!
 
 select = ["ALL"]
-
-extend-safe-fixes = [
-    "C4",     # Collection and comprehension rewrites.
-    "E711",   # Compare to None with identity.
-    "E712",   # Compare booleans by truthiness.
-    "E731",   # Do not assign a `lambda` expression, use a `def`.
-    "F401",   # Remove unused imports.
-    "F601",   # Remove overwritten dictionary entries.
-    "F841",   # Remove unused local bindings.
-    "PT006",  # Use tuple for pytest.mark.parametrize names.
-    "PT007",  # Use tuple/list consistently for pytest values.
-    "PT018",  # Split composite assertions.
-    "PYI034", # Annotate __enter__/__new__/__iadd__ returns as Self.
-    "RET504", # Remove unnecessary local assignment directly before return.
-    "RUF007", # Prefer `itertools.pairwise()` over `zip()` when iterating over successive pairs.
-    "SIM102", # Collapse nested if statements.
-    "SIM105", # Use contextlib.suppress instead of try-except-pass.
-    "TC",     # Type-checking import and annotation rewrites.
-    "UP",     # Python syntax upgrades.
-]
 
 ignore = [
     # COM812 is deliberately ignored here and re-enabled only by the
@@ -411,6 +398,29 @@ ignore = [
     # NEVER ADD MORE SUPPRESSIONS! SUPPRESS IN FILE!
 ]
 
+extend-safe-fixes = [
+    "C4",     # Collection and comprehension rewrites.
+    "D301",   # Use `r"""` if any backslashes in a docstring.
+    "E711",   # Compare to None with identity.
+    "E712",   # Compare booleans by truthiness.
+    "E731",   # Do not assign a `lambda` expression, use a `def`.
+    "F401",   # Remove unused imports.
+    "F601",   # Remove overwritten dictionary entries.
+    "F841",   # Remove unused local bindings.
+    "ISC004", # Unparenthesized implicit string concatenation in collection.
+    "PT006",  # Use tuple for pytest.mark.parametrize names.
+    "PT007",  # Use tuple/list consistently for pytest values.
+    "PT018",  # Split composite assertions.
+    "PYI034", # Annotate __enter__/__new__/__iadd__ returns as Self.
+    "RET504", # Remove unnecessary local assignment directly before return.
+    "RUF007", # Prefer `itertools.pairwise()` over `zip()` when iterating over successive pairs.
+    "RUF022", # `__all__` is not sorted.
+    "SIM102", # Collapse nested if statements.
+    "SIM105", # Use contextlib.suppress instead of try-except-pass.
+    "TC",     # Type-checking import and annotation rewrites.
+    "UP",     # Python syntax upgrades.
+]
+
 [tool.ruff.lint.per-file-ignores]
 # NEVER ADD MORE SUPPRESSIONS! SUPPRESS IN FILE!
 
@@ -432,6 +442,21 @@ ignore = [
     "S101",    # Use of `assert` detected.
     "S301",    # Pickle usage.
     "SLF001",  # Private member access.
+    # NEVER ADD MORE SUPPRESSIONS! SUPPRESS IN FILE!
+]
+
+"*.ipynb" = [
+    "ARG001",  # Unused function argument (callbacks).
+    "BLE001",  # Blind exception (sandboxed exec).
+    "E402",    # Module level import not at top of file.
+    "F811",    # Redefinition across cells.
+    "F821",    # Undefined name (e.g., `display` from IPython).
+    "INP001",  # Implicit namespace package.
+    "PLC0415", # Import not at top level.
+    "RUF100",  # Preserve noqa for jupytext-synced .py files.
+    "S102",    # Use of exec.
+    "S301",    # Pickle usage.
+    "T201",    # Print found.
     # NEVER ADD MORE SUPPRESSIONS! SUPPRESS IN FILE!
 ]
 
@@ -491,22 +516,6 @@ ignore = [
     "TID251",  # Banned API.
     # NEVER ADD MORE SUPPRESSIONS! SUPPRESS IN FILE!
 ]
-
-"*.ipynb" = [
-    "ARG001",  # Unused function argument (callbacks).
-    "BLE001",  # Blind exception (sandboxed exec).
-    "E402",    # Module level import not at top of file.
-    "F811",    # Redefinition across cells.
-    "F821",    # Undefined name (e.g., `display` from IPython).
-    "INP001",  # Implicit namespace package.
-    "PLC0415", # Import not at top level.
-    "RUF100",  # Preserve noqa for jupytext-synced .py files.
-    "S102",    # Use of exec.
-    "S301",    # Pickle usage.
-    "T201",    # Print found.
-    # NEVER ADD MORE SUPPRESSIONS! SUPPRESS IN FILE!
-]
-
 "{**/docs/**,**/scripts/**}" = [
     "INP001",  # Standalone example scripts.
     "T201",    # Print found. (Eval scripts use print for output.)
@@ -595,18 +604,12 @@ useLibraryCodeForTypes = false
 # `stubPath` (not `extraPaths`) is the one root that resolves ahead of an
 # installed package's inline types.
 stubPath = "typings"
-# typings/ is ALSO a source root so a stub package can ship a placeholder .py:
-# triton is linux-only (uv.lock `sys_platform == 'linux'`), so without this
-# every `import triton` fails `reportMissingModuleSource` on macOS, and an inline
-# suppression would fail `reportUnnecessaryTypeIgnoreComment` on linux. Stubs
-# still win over source, so no type changes. Mirrors [tool.ty.environment].
-extraPaths = ["typings"]
-# `rekursiv-ai-typeshed` (a `typecheck` dependency): the checkers' bundled stdlib
-# with `int`/`float` `__pow__` returning `float` rather than typeshed's `Any`,
-# which would otherwise make every `x ** 0.5` a `reportAny` violation.
-# `uv sync` installs it as shared data at this path; the `basedpyright/` tree
-# also carries configgle's `Intersection` polyfill.
-typeshedPath = ".venv/share/rekursiv-ai-typeshed/basedpyright"
+# typings/ is ALSO a source root so a local stub can ship a placeholder .py.
+# `rekursiv-ai-typings` installs its own placeholder trees (triton is
+# linux-only, so without one every `import triton` fails
+# `reportMissingModuleSource` on macOS) under .venv/share. Stubs still win
+# over source, so no type changes.
+extraPaths = ["typings", ".venv/share/rekursiv-ai-typings"]
 # `exclude` and `ignore` are the SAME list on purpose. `exclude` stops a path
 # from being a checked source; `ignore` also silences diagnostics when an
 # included file imports it. Pyright has no single key for both, so keep them
@@ -621,8 +624,8 @@ exclude = [
     "build/",
     "dist/",
     "**/third_party/",
-    "**/typings/",
     # NEVER ADD MORE EXCLUSIONS! SUPPRESS IN FILE!
+    "**/typings/",
 ]
 ignore = [
     "**/.venv/",
@@ -634,8 +637,8 @@ ignore = [
     "build/",
     "dist/",
     "**/third_party/",
-    "**/typings/",
     # NEVER ADD MORE IGNORES! SUPPRESS IN FILE!
+    "**/typings/",
 ]
 pythonPlatform = "Linux"
 pythonVersion = "3.12"  # Intentional; test at 3.12 for exports.
@@ -659,8 +662,6 @@ reportUnnecessaryTypeIgnoreComment = false # Public package drops source-tree-on
 
 [tool.ty.environment]
 python-version = "3.12"  # Intentional; test at 3.12 for exports.
-# Same patch as `[tool.basedpyright] typeshedPath`, with ty's real `ty_extensions`.
-typeshed = ".venv/share/rekursiv-ai-typeshed/ty"
 extra-paths = ["typings"]
 
 # Mirrors `[tool.basedpyright] exclude`, minus entries ty never walks anyway
@@ -675,21 +676,62 @@ exclude = [
     "build/",
     "dist/",
     "**/third_party/",
-    "**/typings/",
     # NEVER ADD MORE EXCLUSIONS! SUPPRESS IN FILE!
+    "**/typings/",
 ]
 
 [tool.ty.rules]
 all = "warn"
+# ty 0.0.86+ rejects nested-class overrides like `class Config(Parent.Config)`:
+# https://github.com/astral-sh/ty/issues/4711 (fix: astral-sh/ruff#29346).
+# Re-enable once a ty release includes the fix; pyrefly's bad-override still
+# checks overrides meanwhile.
+invalid-attribute-override = "ignore"
 
 [[tool.ty.overrides]]
 include = ["*_test.py"]
+
 [tool.ty.overrides.rules]
 invalid-key = "ignore"
 
 [tool.ty.terminal]
 error-on-warning = true
 output-format = "concise"   # Choices: full concise gitlab github junit
+
+[tool.pyrefly]
+# Explicit: the default also globs `**/*.ipynb`, which the excludes then drop
+# with a warning on every run.
+project-includes = ["**/*.py", "**/*.pyi"]
+project-excludes = [
+    "**/.venv/",
+    "**/.venv-ci312/",
+    "**/node_modules/",
+    "*.egg-info/",
+    "**/*.ipynb",
+    ".pytest_cache/",
+    "build/",
+    "dist/",
+    "**/third_party/",
+    "typings/",
+    "**/.export/typings/",
+    "website/rekursiv-ai.github.io/_site/",
+]
+search-path = ["typings"]
+# Pinned beside the config: an interpreter found through a symlinked home splits
+# site-packages from the typeshed, and `pathlib.Path` stops matching `PathLike`.
+python-interpreter-path = ".venv/bin/python"
+python-platform = "linux"
+python-version = "3.12.0"  # Intentional; test at 3.12 for exports.
+preset = "strict"
+infer-with-first-use = true  # Like ty: an empty `[]`/`{}` takes its first use's type.
+output-format = "min-text"
+min-severity = "warn"
+
+# Mirrors the `[tool.basedpyright]` rules turned off there.
+[tool.pyrefly.errors]
+no-access = "ignore"           # reportPrivateUsage
+missing-super-call = "ignore"  # reportMissingSuperCall
+unused-call-result = "ignore"  # reportUnusedCallResult
 
 [tool.codespell]
 # some_variable_with_typo = "connexion"  # codespell:ignore
@@ -704,21 +746,23 @@ skip = "htmlcov,.doctrees,*.pyc,*.ico,*.png,*.jpg,*.PNG,*.inv,*.dot,*.css,*.egg-
 ignore-regex = '(?:https?://[^\s)>\]]+|`[^`\n]+`|\b\w*[a-z][A-Z]\w*\b)'
 ignore-multiline-regex = '(?m)^[ \t]*```.*?^[ \t]*```'
 
+[tool.jupytext]
+formats = "ipynb,py:percent"
+
 [tool.uv]
 package = true
 environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'darwin'",
 ]
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 
 [tool.uv.workspace]
 members = []
-
-[tool.uv.extra-build-dependencies]
-rekursiv-ai-typeshed = [
-    {requirement = "basedpyright", match-runtime = true},
-    {requirement = "ty", match-runtime = true},
-]
 
 [tool.uv.pip]
 compile-bytecode = true
@@ -744,8 +788,5 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
-treekle = { git = "https://github.com/rekursiv-ai/treekle", branch = "main" }
-rekursiv-ai-typeshed = { path = "packages/rekursiv-ai-typeshed" }
-configgle = { git = "https://github.com/rekursiv-ai/configgle", branch = "main" }
-priml = { git = "https://github.com/rekursiv-ai/priml", branch = "main" }
+rekursiv-ai-typings = { git = "https://github.com/rekursiv-ai/typings", branch = "main" }
 wesearch = { git = "https://github.com/rekursiv-ai/wesearch", branch = "main" }

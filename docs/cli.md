@@ -14,9 +14,9 @@ The public package defaults to API-key auth with `--auth env`. Provider API keys
 Every interactive session shows the Sagent welcome before provider or model
 configuration, including a first launch without credentials and a resumed
 session. The single frame contains the SAGENT identity, project folder, and
-help hints. `sagent --help` shows startup options from the shell; `/help`,
-`/tasks`, and `/quit` apply once the chat prompt is available. The greeting sits
-outside the frame.
+in-session help hints: `/help`, `/tasks` (running tool calls), `/quit`, and
+Left on an empty prompt line (`←`), which opens the agent tree. The greeting
+sits outside the frame.
 
 After successful setup, the resolved provider/model line appears below the
 welcome, followed by the normal chat prompt. Missing credentials keep the
@@ -25,22 +25,19 @@ or provider-selection behavior is introduced. The welcome makes no model
 request and does not verify credentials with the remote service.
 
 The terminal background and body text follow your terminal settings.
-`NO_COLOR=1` disables color. Fresh color terminals show a highlight tracing
-the Rekursiv icon twice before provider construction. Set
-`SAGENT_NO_ANIMATION=1` to keep startup static. Resumed sessions, compact
-layouts, redirected output, and `NO_COLOR` output remain static. Narrow, short,
-dumb, or non-Unicode terminals use a compact SAGENT heading. Resumed sessions
-also use the compact heading to leave room for the saved transcript.
+`NO_COLOR=1` disables color. The welcome prints at once, with no animation.
+Narrow, short, dumb, or non-Unicode terminals use a compact SAGENT heading.
+Resumed sessions also use the compact heading to leave room for the saved
+transcript.
 
 Welcome layout follows a terminal-cell grid:
 
-- The icon and wordmark have the same height, separated by three cells.
-- The terminal-width frame has one empty row above and below its content,
-  with two cells of horizontal padding.
+- The icon sits left of the wordmark, separated by three cells.
+- The frame spans the terminal, up to 80 columns, with one empty row above
+  and below its content and two cells of horizontal padding.
 - Long paths mark omitted ancestors with an ellipsis and retain the project
   suffix. Command descriptions stay with their commands when wrapping.
-- The greeting stays outside the frame, aligned with its content edge.
-- Animation changes icon color only; lettering and the three bars stay fixed.
+- The greeting stays outside the frame, flush with its left border.
 
 Piped input does not show a welcome. Redirected stderr keeps plain error output
 or the provider/model line. `sagent --help` remains plain argparse help.

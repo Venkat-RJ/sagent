@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import io
 
@@ -14,10 +13,6 @@ import pytest
 
 from sagent.tui import welcome
 from sagent.tui.welcome import render_welcome
-
-
-if TYPE_CHECKING:
-    from rich.text import Text
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +54,7 @@ def test_fresh_terminal_has_banner_actual_metadata_and_invitation() -> None:
     assert "test-model" in out
     assert "TestProvider" in out
     assert "/research" in out
-    assert "Hello, scientist! What are we doing today?" in out
+    assert "Good news, everyone! The discovering begins!" in out
     assert "/help" in out
     assert "/quit" in out
     assert "/tasks" in out
@@ -78,7 +73,7 @@ def test_resume_keeps_transcript_prominent() -> None:
     assert "SAGENT" in out
     assert "Resuming your session." in out
     assert "█" not in out
-    assert "Hello, scientist! What are we doing today?" in out
+    assert "Good news, everyone! The discovering begins!" in out
 
 
 def test_welcome_without_configuration_has_identity_and_help() -> None:
@@ -93,7 +88,7 @@ def test_welcome_without_configuration_has_identity_and_help() -> None:
     render_welcome(console, folder=Path("/research"))
     text = console.export_text(styles=False)
     assert "███████" in text
-    assert "sagent --help" in text
+    assert "sagent --help" not in text
     assert "/help" in text
     assert "/research" in text
     assert "model" not in text
@@ -105,6 +100,15 @@ def test_redirected_unconfigured_welcome_is_silent() -> None:
     stream = io.StringIO()
     render_welcome(Console(file=stream, force_terminal=False), folder=Path("/research"))
     assert stream.getvalue() == ""
+
+
+def test_print_welcome_writes_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    welcome.print_welcome(
+        model="test-model",
+        provider="TestProvider",
+        folder=Path("/research"),
+    )
+    assert capsys.readouterr() == ("", "[TestProvider] test-model\n")
 
 
 def test_redirected_output_retains_only_plain_model_line() -> None:
@@ -207,116 +211,6 @@ def test_literal_metadata_is_not_parsed_as_markup() -> None:
     assert "[bold]" in out
 
 
-def test_loop_finishes_before_metadata_and_restores_cursor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    delays: list[float] = []
-    monkeypatch.setattr("sagent.tui.welcome.time.sleep", delays.append)
-    stream = io.StringIO()
-    render_welcome(
-        Console(
-            file=stream,
-            force_terminal=True,
-            color_system="truecolor",
-            no_color=False,
-            width=80,
-            height=24,
-        ),
-        model="test-model",
-        provider="TestProvider",
-        folder=Path("/research"),
-        animate=True,
-    )
-    out = stream.getvalue()
-    assert 0 < sum(delays) < 0.8
-    assert "\x1b[?25l" in out
-    assert out.index("\x1b[?25h") < out.index("test-model")
-    assert out.count("test-model") == 1
-    assert "Hello, scientist! What are we doing today?" in out
-
-
-@pytest.mark.parametrize(
-    ("width", "height", "terminal", "no_color", "resumed"),
-    [
-        (40, 24, True, False, False),
-        (80, 18, True, False, False),
-        (80, 24, False, False, False),
-        (80, 24, True, True, False),
-        (80, 24, True, False, True),
-    ],
-)
-def test_fallbacks_do_not_animate(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    width: int,
-    height: int,
-    terminal: bool,
-    no_color: bool,
-    resumed: bool,
-) -> None:
-    delays: list[float] = []
-    monkeypatch.setattr("sagent.tui.welcome.time.sleep", delays.append)
-    render_welcome(
-        Console(
-            file=io.StringIO(),
-            force_terminal=terminal,
-            no_color=no_color,
-            width=width,
-            height=height,
-        ),
-        model="test-model",
-        provider="TestProvider",
-        folder=Path("/research"),
-        animate=True,
-        resumed=resumed,
-    )
-    assert not delays
-
-
-def test_environment_can_disable_startup_animation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("SAGENT_NO_ANIMATION", "1")
-    calls: list[bool] = []
-
-    def capture(*_args: object, **kwargs: object) -> None:
-        calls.append(kwargs["animate"] is False)
-
-    monkeypatch.setattr(welcome, "render_welcome", capture)
-    welcome.print_welcome(
-        model="test-model",
-        provider="TestProvider",
-        folder=Path("/research"),
-    )
-    assert calls == [True]
-
-
-def test_interrupted_loop_restores_terminal_cursor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def interrupt(_seconds: float) -> None:
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr("sagent.tui.welcome.time.sleep", interrupt)
-    stream = io.StringIO()
-    with pytest.raises(KeyboardInterrupt):
-        render_welcome(
-            Console(
-                file=stream,
-                force_terminal=True,
-                color_system="truecolor",
-                no_color=False,
-                width=80,
-                height=24,
-            ),
-            model="test-model",
-            provider="TestProvider",
-            folder=Path("/research"),
-            animate=True,
-        )
-    assert "\x1b[?25h" in stream.getvalue()
-
-
 @pytest.mark.parametrize("width", [16, 40, 56, 80, 120])
 def test_terminal_width_border_contains_identity_commands_with_greeting_outside(
     width: int,
@@ -340,18 +234,42 @@ def test_terminal_width_border_contains_identity_commands_with_greeting_outside(
     top = next(i for i, line in enumerate(lines) if line.startswith("╭"))
     bottom = next(i for i, line in enumerate(lines) if line.startswith("╰"))
     frame = lines[top : bottom + 1]
-    assert all(cell_len(line) == width for line in frame)
+    assert all(cell_len(line) == min(width, 80) for line in frame)
     assert all(line.startswith("│ ") and line.endswith(" │") for line in frame[1:-1])
     assert "project" in "\n".join(frame)
     assert "/help" in "\n".join(frame)
-    assert "scientist!" not in "\n".join(frame)
-    assert "scientist!" in "\n".join(lines[bottom + 1 :])
+    assert "everyone!" not in "\n".join(frame)
+    assert "everyone!" in "\n".join(lines[bottom + 1 :])
     assert all(cell_len(line) <= width for line in lines)
 
 
 def test_dumb_terminal_has_no_border(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TERM", "dumb")
     assert "╭" not in _render()
+
+
+def test_ascii_terminal_names_the_tree_key_in_words() -> None:
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii")
+    console = Console(file=stream, force_terminal=True, width=80, record=True)
+    render_welcome(console, folder=Path("/research"))
+    stream.flush()
+    _ = raw.getvalue().decode("ascii")
+    assert "Left agents" in console.export_text(styles=False)
+
+
+def test_wide_terminal_keeps_the_banner_at_80_columns() -> None:
+    console = Console(
+        file=io.StringIO(),
+        force_terminal=True,
+        record=True,
+        width=200,
+        height=40,
+    )
+    render_welcome(console, folder=Path("/research"))
+    lines = console.export_text(styles=False).splitlines()
+    assert "███████╗" in "\n".join(lines)
+    assert max(cell_len(line.rstrip()) for line in lines) == 80
 
 
 def test_ascii_border_preserves_encoding() -> None:
@@ -389,18 +307,7 @@ def test_icon_is_left_of_wordmark_without_extra_brand_text() -> None:
     first = next(line for line in plain.splitlines() if "███████╗" in line)
     assert first.index("╔") < first.index("███████╗")
     assert "▼" in plain
-    assert "██████    ║" in plain
-
-
-def test_loop_frames_leave_wordmark_and_bars_unchanged() -> None:
-    still = welcome._banner_rows()
-    for phase in range(0, len(welcome._LOOP), 3):
-        animated = welcome._banner_rows(phase)
-        assert [row.plain for row in animated] == [row.plain for row in still]
-        for static_row, animated_row in zip(still, animated, strict=True):
-            start = welcome._ICON_WIDTH + welcome._ICON_GAP
-            assert static_row[start:].spans == animated_row[start:].spans
-        assert animated != still
+    assert " ██████   ║" in plain
 
 
 @pytest.mark.parametrize("width", [56, 68])
@@ -413,57 +320,17 @@ def test_icon_and_wordmark_use_compact_layout_when_the_pair_would_wrap(
     assert "rekursiv.ai" not in out
 
 
-def test_startup_completes_two_loop_laps(monkeypatch: pytest.MonkeyPatch) -> None:
-    phases: list[int] = []
-    original = welcome._banner_rows
-
-    def capture(phase: int | None = None) -> list[Text]:
-        if phase is not None:
-            phases.append(phase)
-        return original(phase)
-
-    monkeypatch.setattr(welcome, "_banner_rows", capture)
-
-    def no_delay(_seconds: float) -> None:
-        pass
-
-    monkeypatch.setattr("sagent.tui.welcome.time.sleep", no_delay)
-    render_welcome(
-        Console(
-            file=io.StringIO(),
-            force_terminal=True,
-            color_system="truecolor",
-            no_color=False,
-            width=80,
-            height=24,
-        ),
-        model="test-model",
-        provider="TestProvider",
-        folder=Path("/research"),
-        animate=True,
-    )
-    expected = list(range(len(welcome._LOOP)))
-    assert phases == expected + expected
-    assert (
-        welcome._LOOP[-1] in welcome._LOOP[max(0, expected[-1] - 3) : expected[-1] + 1]
-    )
-
-
-@pytest.mark.parametrize("phase", [None, 0, 9, 24])
-def test_identity_keeps_a_rectangular_cell_grid(phase: int | None) -> None:
-    rows = welcome._banner_rows(phase)
-    assert len(rows) == len(welcome._BANNER)
+def test_identity_keeps_a_rectangular_cell_grid() -> None:
+    rows = welcome._banner_rows()
+    assert len(rows) == len(welcome._ICON)
     assert all(row.cell_len == welcome._IDENTITY_WIDTH for row in rows)
     wordmark_start = welcome._ICON_WIDTH + welcome._ICON_GAP
+    assert len(welcome._ICON) == len(welcome._BANNER)
     for row_index, row in enumerate(rows):
         assert row.plain[welcome._ICON_WIDTH : wordmark_start] == "   "
-        if row_index < len(welcome._BANNER):
-            assert (
-                row.plain[wordmark_start:].rstrip()
-                == welcome._BANNER[row_index].rstrip()
-            )
-        else:
-            assert not row.plain[wordmark_start:].strip()
+        assert (
+            row.plain[wordmark_start:].rstrip() == welcome._BANNER[row_index].rstrip()
+        )
 
 
 def test_frame_has_equal_top_and_bottom_breathing_room() -> None:
@@ -507,7 +374,8 @@ def test_command_descriptions_stay_with_their_command(width: int) -> None:
     lines = plain.splitlines()
     for command, description in [
         ("/help", "commands"),
-        ("/tasks", "agents"),
+        ("←", "agents"),
+        ("/tasks", "tool calls"),
         ("/quit", "exit"),
     ]:
         matching = [line for line in lines if command in line]
@@ -517,7 +385,7 @@ def test_command_descriptions_stay_with_their_command(width: int) -> None:
     assert all(cell_len(line) <= width for line in lines)
 
 
-def test_wrapped_greeting_keeps_the_content_left_edge() -> None:
+def test_wrapped_greeting_is_flush_with_the_frame_edge() -> None:
     stream = io.StringIO()
     console = Console(
         file=stream,
@@ -534,7 +402,7 @@ def test_wrapped_greeting_keeps_the_content_left_edge() -> None:
     )
     lines = console.export_text(styles=False).splitlines()
     greeting_start = next(
-        i for i, line in enumerate(lines) if "Hello, scientist!" in line
+        i for i, line in enumerate(lines) if "Good news, everyone!" in line
     )
-    assert lines[greeting_start].startswith("   ")
-    assert lines[greeting_start + 1] == "   today?"
+    assert lines[greeting_start].startswith("Good news")
+    assert lines[greeting_start + 1] == "begins!"

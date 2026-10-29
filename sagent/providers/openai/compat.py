@@ -45,7 +45,11 @@ else:
 from treekle import MutablePlainTree, ReadError, from_plain, json_loads, mutable
 
 from sagent.catalog.openai import compatible
-from sagent.catalog.table import ModelCatalog, ModelTable, base_model_id
+from sagent.catalog.table import (
+    ModelCatalog,
+    ModelTable,
+    base_model_id,
+)
 from sagent.lib import debug_log
 from sagent.providers.lib.errors import (
     error_status_code,
@@ -476,8 +480,8 @@ def build_messages(
     ids = IdRemapper("call_")
     messages: list[dict[str, MutablePlainTree]] = []
     pending_images: list[dict[str, MutablePlainTree]] = []
-    if request.system:
-        messages.append({"role": "system", "content": request.system})
+    if request.system_text:
+        messages.append({"role": "system", "content": request.system_text})
     for entry in request.messages:
         if isinstance(entry, (AgentSendMessage, UserMessage)):
             _flush_images(messages, pending_images)
@@ -810,7 +814,7 @@ def _parse_tool_arguments(
         )
         return {}
     try:
-        parsed = json.loads(args_str)
+        parsed = json_loads(args_str)
     except json.JSONDecodeError:
         logger.warning(
             "OpenAI-compatible tool arguments were invalid JSON: "
@@ -822,7 +826,7 @@ def _parse_tool_arguments(
         )
         return {}
     if isinstance(parsed, dict):
-        return cast(dict[str, MutablePlainTree], parsed)
+        return parsed
     logger.warning(
         "OpenAI-compatible tool arguments were not a JSON object: "
         "source=%s tool=%s call_id=%s",

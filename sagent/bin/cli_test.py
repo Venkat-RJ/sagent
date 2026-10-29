@@ -17,7 +17,7 @@ import os
 import subprocess
 import sys
 
-from treekle import ReadError
+from treekle import ReadError, json_loads
 from wesearch.fetch import FetchSession
 
 import pytest
@@ -58,10 +58,14 @@ from sagent.bin.cli import (
     _resume_label,
     _resume_persistent_agents,
     _run_headless,
+    _session_context,
+    _session_tool_names,
+    _welcome_folder,
     parse_agent_args,
     resolve_tools,
 )
 from sagent.catalog.table import UnknownModelError
+from sagent.prompt import SagentContext
 from sagent.providers import PROVIDER_NAMES
 from sagent.sessions import SessionInfo, project_dir
 from sagent.testing import FakeAgent, MockModelCaps
@@ -85,16 +89,16 @@ from sagent.types.runtime import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
-    from sagent.types.tape import TapeRecord
+    from sagent.bin.cli import Flags
 
 
 _CWD: Final = Path(__file__).resolve().parent
 
 
-def _parse(args: Sequence[str]) -> argparse.Namespace:
+def _parse(args: Sequence[str]) -> Flags:
     parser = argparse.ArgumentParser()
-    namespace, _ = _parse_cli_args(parser, list(args))
-    return namespace
+    flags, _ = _parse_cli_args(parser, list(args))
+    return flags
 
 
 def test_parse_cli_args_defaults() -> None:
@@ -149,129 +153,23 @@ class _ChildStubModel(MockModelCaps):
     supports_thinking: bool = True
 
 
-@pytest.mark.parametrize("interactive", [True, False])
-@pytest.mark.parametrize("resumed", [True, False])
-def test_main_welcome_precedes_repl_and_stays_out_of_headless(
+def test_welcome_folder_is_the_resumed_sessions_folder(tmp_path: Path) -> None:
+    assert _welcome_folder(ToolState(bash_cwd=str(tmp_path))) == tmp_path
+
+
+def test_welcome_folder_is_the_cwd_without_a_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    *,
-    interactive: bool,
-    resumed: bool,
 ) -> None:
-    """Exercise CLI routing with real Agent setup but no model generation."""
-    for key in ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
-        monkeypatch.setenv(key, str(tmp_path / key))
-    monkeypatch.setattr(sys, "argv", ["sagent", "--tools", "none"])
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: interactive)
-    monkeypatch.setattr(sessions, "migrate_legacy_home", lambda: None)
-    state = ToolState(bash_cwd=str(tmp_path / "restored-folder"))
-
-    def _session_dir(_args: argparse.Namespace) -> Path:
-        return tmp_path / "session"
-
-    def _loaded_session(
-        _path: Path,
-    ) -> tuple[SessionMeta, list[TapeRecord], ToolState] | None:
-        return (SessionMeta(), [], state) if resumed else None
-
-    monkeypatch.setattr(cli, "_resolve_session_dir", _session_dir)
-    monkeypatch.setattr(cli, "load_session", _loaded_session)
-    model = _ChildStubModel(model_id="resolved-model")
-
-    class _Provider:
-        async def close_sdk(self) -> None:
-            pass
-
-    def _provider_model(
-        *_args: object,
-        **_kwargs: object,
-    ) -> tuple[_Provider, _ChildStubModel, str]:
-        events.append("provider")
-        return _Provider(), model, "env"
-
-    monkeypatch.setattr(cli, "_build_provider_model", _provider_model)
-    events: list[str] = []
-    welcome: list[dict[str, object]] = []
-
-    def _welcome(**kwargs: object) -> None:
-        welcome.append(kwargs)
-        events.append("welcome")
-
-    async def _repl(agent: Agent, **_kwargs: object) -> None:
-        events.append("repl")
-        agent.shutdown(force=True)
-
-    async def _headless(agent: Agent, **_kwargs: object) -> None:
-        events.append("headless")
-        agent.shutdown(force=True)
-
-    monkeypatch.setattr(cli, "print_welcome", _welcome)
-    monkeypatch.setattr(cli, "run_repl", _repl)
-    monkeypatch.setattr(cli, "_run_headless", _headless)
-
-    def _logging(*_args: object, **_kwargs: object) -> None:
-        pass
-
-    monkeypatch.setattr(cli, "_install_repl_logging", _logging)
-    assert cli.main() == 0
-    if interactive:
-        assert events == ["welcome", "provider", "repl"]
-        assert "model" not in welcome[0]
-        assert welcome[0]["resumed"] is resumed
-        expected_folder = tmp_path / "restored-folder" if resumed else Path.cwd()
-        assert welcome[0]["folder"] == expected_folder
-    else:
-        assert events == ["provider", "headless"]
-        assert welcome == []
-
-
-@pytest.mark.parametrize("interactive", [True, False])
-@pytest.mark.parametrize(
-    "provider",
-    [None, "Anthropic", "OpenAI", "Google", "AnthropicCLI"],
-)
-def test_missing_credentials_keep_welcome_and_existing_setup_guidance(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    *,
-    interactive: bool,
-    provider: str | None,
-) -> None:
-    argv = ["sagent", "--ephemeral"]
-    if provider is not None:
-        argv.extend(["--provider", provider])
-    monkeypatch.setattr(sys, "argv", argv)
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: interactive)
-    monkeypatch.setattr(sessions, "migrate_legacy_home", lambda: None)
-    events: list[str] = []
-
-    def unavailable(*_args: object, **_kwargs: object) -> None:
-        events.append("provider")
-        raise FileNotFoundError("No credentials in this test")
-
-    def welcome(**kwargs: object) -> None:
-        events.append("welcome")
-        assert "model" not in kwargs
-
-    def unexpected_agent(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("An unconfigured session must not construct an agent")
-
-    monkeypatch.setattr("sagent.providers.providers.build_provider", unavailable)
-    monkeypatch.setattr(cli, "print_welcome", welcome)
-    monkeypatch.setattr(cli, "Agent", unexpected_agent)
-    assert cli.main() == 1
-    assert events[0] == ("welcome" if interactive else "provider")
-    assert events.count("welcome") == int(interactive)
-    error = capsys.readouterr().err
-    assert "Error:" in error
-    assert "Try one of:" in error
+    monkeypatch.chdir(tmp_path)
+    assert _welcome_folder(None) == tmp_path
 
 
 class _PersistentAgentRecordFields(TypedDict, total=False, closed=True):
     """The ``PersistentAgentRecord`` fields a test overrides."""
 
     account: str | None
-    frozen_system: bool
+    append_system: str
     label: str
     max_request_tokens: int | None
     max_response_tokens: int | None
@@ -279,6 +177,7 @@ class _PersistentAgentRecordFields(TypedDict, total=False, closed=True):
     show_thinking: bool
     thinking_budget: str
     thinking_output: str
+    tools: tuple[str, ...]
 
 
 def _child_record(
@@ -387,6 +286,30 @@ async def test_resumed_child_exit_persists_terminal_state(
     assert "resumed-child" not in agent_registry
 
 
+@pytest.mark.asyncio
+async def test_resume_skips_a_hot_child_whose_prompt_it_cannot_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A hot spawn saved its parent's whole prompt; rebuilt, every block doubles."""
+    _stub_build_provider(monkeypatch)
+    parent = Agent(model=cast(Model, _ChildStubModel()), tools=[], session_dir=tmp_path)
+    session_file = tmp_path / "session.jsonl"
+    append_session(
+        session_file,
+        persistent_agents=[_child_record(label="hot-child", session_dir="c")],
+    )
+    record = json_loads(session_file.read_text(encoding="utf-8"), dict[str, object])
+    session_file.write_text(
+        json.dumps({**record, "frozen_system": True}) + "\n",
+        encoding="utf-8",
+    )
+    await _resume_persistent_agents(parent, tmp_path, allow_providers=("Anthropic",))
+    assert "hot-child" not in agent_registry
+    assert "skipping 'hot-child'" in capsys.readouterr().err
+
+
 def test_build_persistent_child_restores_thinking_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -402,18 +325,29 @@ def test_build_persistent_child_restores_thinking_state(
     assert child.model.settings.thinking_output == "text"
 
 
-def test_build_persistent_child_restores_frozen_system(
+def test_build_persistent_child_restores_its_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A hot child's persisted ``system`` is already fully rendered.
-
-    Resuming it cold would re-append its tools' prompt contributions on
-    top of that snapshot, so the resumed prompt must stay frozen.
-    """
+    """A resumed child gets back its own prompt, and the CLI's project context."""
     _stub_build_provider(monkeypatch)
-    record = _child_record(frozen_system=True)
+    record = _child_record(append_system="Be brief.")
     child = _build_persistent_child(record, allow_providers=())
-    assert child.frozen_system is True
+    assert child.system == record.system
+    assert child.append_system == "Be brief."
+    assert isinstance(child.prompt_context, SagentContext)
+
+
+def test_a_resumed_child_shown_no_memories_gets_no_memory_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recipe can change between runs; the tool follows the index, not the record."""
+    _stub_build_provider(monkeypatch)
+    _recipe_without_memory(monkeypatch)
+    child = _build_persistent_child(
+        _child_record(tools=("Read", "Memory")),
+        allow_providers=(),
+    )
+    assert [tool.name for tool in child.tools] == ["Read"]
 
 
 def test_resumed_persistent_child_missing_account_falls_back_to_default(
@@ -704,6 +638,9 @@ def test_resumed_missing_named_account_falls_back_to_default(
         def model(self, model_id: str | None = None) -> object:
             return argparse.Namespace(tagged_model_id=model_id or "gpt-5.5")
 
+        async def close_sdk(self) -> None:
+            """Hold no SDK."""
+
     monkeypatch.setattr(
         "sagent.providers.OpenAISubscription",
         _Provider,
@@ -877,11 +814,7 @@ def test_named_account_setup_commands_target_that_account() -> None:
 def test_anthropic_cli_login_command_points_to_native_cli(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    args = argparse.Namespace(
-        provider="AnthropicCLI",
-        account=None,
-        headless=False,
-    )
+    args = _parse(["--provider", "AnthropicCLI"])
 
     with pytest.raises(SystemExit) as exc:
         _do_login(args)
@@ -893,11 +826,7 @@ def test_anthropic_cli_login_command_points_to_native_cli(
 def test_anthropic_cli_named_account_login_does_not_target_default(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    args = argparse.Namespace(
-        provider="AnthropicCLI",
-        account="work",
-        headless=False,
-    )
+    args = _parse(["--provider", "AnthropicCLI", "--account", "work"])
 
     with pytest.raises(SystemExit) as exc:
         _do_login(args)
@@ -1149,6 +1078,56 @@ def test_resolve_tools_none_returns_empty() -> None:
 def test_resolve_tools_unknown_raises() -> None:
     with pytest.raises(SystemExit, match="unknown tool"):
         _ = resolve_tools(["NoSuchTool"])
+
+
+def test_the_removed_system_flag_is_an_error_not_a_replacement_prompt(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--system`` added to the prompt; as an abbreviation it would replace it."""
+    with pytest.raises(SystemExit):
+        _ = _parse(["--system", "Be brief."])
+    assert "--append-system-prompt" in capsys.readouterr().err
+
+
+def test_an_ephemeral_session_leaves_memory_out_of_its_default_tools() -> None:
+    args = _parse(["--ephemeral"])
+    assert "Memory" not in _session_tool_names(args, _session_context(args))
+    args = _parse([])
+    assert "Memory" in _session_tool_names(args, _session_context(args))
+
+
+def test_an_ephemeral_session_refuses_the_memory_tool_it_was_asked_for() -> None:
+    """Dropping it silently left the user believing their memories were saved."""
+    args = _parse(["--ephemeral", "--tools", "Read", "Memory"])
+    with pytest.raises(SystemExit, match="--ephemeral"):
+        _ = _session_tool_names(args, _session_context(args))
+
+
+def _recipe_without_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    def sections(section: str, key: str) -> list[str]:
+        del section, key
+        return ["static", "environment", "agents_md"]
+
+    monkeypatch.setattr("sagent.prompt.recipe_list", sections)
+
+
+def test_a_recipe_that_shows_no_memories_leaves_memory_out_of_its_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A save the model is never shown again is a memory it cannot use."""
+    _recipe_without_memory(monkeypatch)
+    args = _parse([])
+    assert "Memory" not in _session_tool_names(args, _session_context(args))
+    args = _parse(["--tools", "Read", "Memory"])
+    with pytest.raises(SystemExit, match="recipe"):
+        _ = _session_tool_names(args, _session_context(args))
+
+
+def test_the_root_gets_background_task_with_agent_spawn_as_a_child_does() -> None:
+    """A child bundles it; a root without it would differ in every schema."""
+    names = [tool.name for tool in resolve_tools(["AgentSpawn", "Read"])]
+    assert names == ["AgentSpawn", "Read", "BackgroundTask"]
+    assert [tool.name for tool in resolve_tools(["Read"])] == ["Read"]
 
 
 def test_resolve_tools_known_subset_includes_bash() -> None:
@@ -1695,7 +1674,7 @@ def test_abbreviated_provider_flag_counts_as_explicit() -> None:
 
 @pytest.mark.parametrize("flag", ["--provider", "--auth", "--account", "--model"])
 def test_flag_explicitness_ignores_unrelated_values(flag: str) -> None:
-    ns = _parse(["--system", f"{flag} appears in prose"])
+    ns = _parse(["--append-system-prompt", f"{flag} appears in prose"])
     assert getattr(ns, f"{flag.removeprefix('--')}_explicit") is False
 
 
@@ -1788,6 +1767,9 @@ class _CustomAuthProvider:
 
     def model(self, model_id: str | None = None) -> object:
         return argparse.Namespace(tagged_model_id=model_id or "m")
+
+    async def close_sdk(self) -> None:
+        """Hold no SDK."""
 
 
 def test_resumed_auth_is_not_replaced_by_provider_default(

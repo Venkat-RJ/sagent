@@ -112,6 +112,10 @@ else:
 
 logger = logging.getLogger(__name__)
 
+# 3.15 ``dataclass`` getattr-walks a field annotation's dotted prefix, so
+# ``torch.dtype`` there would import lazy torch; this alias body stays unevaluated.
+type TorchDtype = torch.dtype
+
 
 class _Tokenizer(Protocol):
     """Minimal HF tokenizer surface used by ``SelfHosted``."""
@@ -159,7 +163,7 @@ class _ModelSpec:
 
     path_or_repo: str
     device: str | None
-    dtype: torch.dtype | None
+    dtype: TorchDtype | None
     compile_model: bool
 
 
@@ -894,8 +898,8 @@ def _build_chat_messages(request: ModelRequest) -> list[dict[str, MutablePlainTr
     """Translate history entries to HF chat-template format."""
     ids = IdRemapper("call_")
     messages: list[dict[str, MutablePlainTree]] = []
-    if request.system:
-        messages.append({"role": "system", "content": request.system})
+    if request.system_text:
+        messages.append({"role": "system", "content": request.system_text})
     for entry in request.messages:
         if isinstance(entry, (AgentSendMessage, UserMessage)):
             messages.append({"role": "user", "content": entry.text})
@@ -1048,12 +1052,12 @@ def _tool_allowed(tc: ToolCall, allowed_tools: set[str] | None) -> bool:
 def _parse_qwen_tool_call(raw: str) -> ToolCall | None:
     """Parse a Qwen-format ``<tool_call>`` body into a ``ToolCall``."""
     try:
-        payload = json.loads(raw.strip())
+        payload = json_loads(raw.strip())
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict):
         return None
-    payload_d = cast(dict[str, MutablePlainTree], payload)
+    payload_d = payload
     name = cast(str | None, payload_d.get("name"))
     raw_args = payload_d.get("arguments") or {}
     if not isinstance(name, str) or not name or not isinstance(raw_args, dict):

@@ -47,7 +47,16 @@ Usage::
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import (
+    IO,
+    TYPE_CHECKING,
+    Final,
+    Literal,
+    Protocol,
+    cast,
+    get_args,
+    runtime_checkable,
+)
 
 import argparse
 import asyncio
@@ -78,10 +87,13 @@ from sagent.agent.session_io import (
     unpersisted_session_error,
 )
 from sagent.agent.state import agent_registry, unique_registry_label
-from sagent.catalog.table import UnknownModelError, UnsupportedTagError
+from sagent.catalog.table import (
+    UnknownModelError,
+    UnsupportedTagError,
+)
 from sagent.compaction.summary import SummaryCompactor
 from sagent.lib.userdirs import data_dir
-from sagent.prompt import build_system
+from sagent.prompt import SagentContext, static_prompt
 from sagent.providers import (
     PROVIDER_NAMES,
     default_auth_for_provider,
@@ -98,7 +110,10 @@ from sagent.thinking import (
     thinking_offered,
 )
 from sagent.tools.advisor import Advisor
-from sagent.tools.agent_spawn import resume_serviced_child
+from sagent.tools.agent_spawn import (
+    bundle_background_task,
+    resume_serviced_child,
+)
 from sagent.tools.core import set_recipe
 from sagent.tools.tool_spec import (
     ToolSpecError,
@@ -127,16 +142,15 @@ from sagent.types.runtime import (
     ToolResult,
     UserMessage,
 )
+from sagent.types.tools import Tool
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Mapping
+    from collections.abc import Callable, Coroutine, Iterable, Mapping
 
     from treekle import MutablePlainTree
 
-    from sagent.types.tools import (
-        Tool,
-    )
+    from sagent.agent.state import ToolState
 
 
 _DEFAULT_PROVIDER: Final[str] = "Anthropic"
@@ -161,6 +175,7 @@ DEFAULT_TOOLS: Final = [
     "PaperDetails",
     "PaperAuthor",
     "PaperFetch",
+    "Memory",
     "PlayAudio",
     "Skill",
 ]
@@ -189,7 +204,8 @@ def resolve_tools(
         ``__init__``, so the signature is the contract.
 
     Returns:
-      tools: Instantiated tool objects in the requested order.
+      tools: Instantiated tool objects in the requested order, then
+          ``BackgroundTask`` when ``AgentSpawn`` is among them, as a child gets.
 
     Raises:
       SystemExit: If a tool name is not found in the tools module, or an
@@ -224,33 +240,29 @@ def resolve_tools(
         if name == "Bash":
             continue
         cls = getattr(tools, name, None)
-        if cls is None:
+        if not isinstance(cls, type):
             raise SystemExit(f"unknown tool: {name!r}")
         kwargs = _tool_kwargs(cls, by_tool.get(name, {}))
         if name in provider_aware:
-            non_bash[name] = cls(allow_providers=allow_providers, **kwargs)
+            kwargs["allow_providers"] = allow_providers
         elif name in session_aware:
-            non_bash[name] = cls(session=session, **kwargs)
-        else:
-            non_bash[name] = cls(**kwargs)
+            kwargs["session"] = session
+        non_bash[name] = _build_tool(name, cls, kwargs)
     resolved: list[Tool] = []
     peers = tuple(non_bash.values())
     for name in names:
         if name == "Bash":
-            bash = tools.Bash(
-                peers=peers,
-                **_tool_kwargs(tools.Bash, by_tool.get(name, {})),
-            )
-            resolved.append(bash)
+            kwargs = _tool_kwargs(tools.Bash, by_tool.get(name, {}))
+            resolved.append(_build_tool(name, tools.Bash, {"peers": peers, **kwargs}))
         else:
             resolved.append(non_bash[name])
-    return resolved
+    return bundle_background_task(resolved)
 
 
 def parse_agent_args(
     parser: argparse.ArgumentParser,
     argv: list[str] | None = None,
-) -> tuple[argparse.Namespace, list[str]]:
+) -> tuple[AgentFlags, list[str]]:
     """Add shared agent flags to ``parser`` and parse ``argv``.
 
     Args:
@@ -321,10 +333,19 @@ def parse_agent_args(
             " to set window."
         ),
     )
+    # Kept only to refuse it: ``--system`` once added to the prompt, and argparse
+    # would otherwise accept it as an abbreviation of ``--system-prompt``, which
+    # replaces the recipe's base prompt instead.
+    parser.add_argument("--system", dest="removed_system", help=argparse.SUPPRESS)
     parser.add_argument(
-        "--system",
+        "--system-prompt",
+        default=None,
+        help="System prompt replacing the recipe's base prompt.",
+    )
+    parser.add_argument(
+        "--append-system-prompt",
         default="",
-        help="Additional system prompt instructions.",
+        help="Instructions added after the system prompt.",
     )
     parser.add_argument(
         "--recipe",
@@ -366,6 +387,8 @@ def parse_agent_args(
     parser.add_argument(
         "--effort",
         default=None,
+        choices=get_args(cast(object, ThinkingEffort.__value__)),
+        metavar="EFFORT",
         help=(
             "Provider-specific reasoning effort"
             " (none|min|low|medium|high|xhigh|max)."
@@ -428,15 +451,24 @@ def parse_agent_args(
         metavar="N",
         help="Maximum response tokens for one model call. Default: model limit.",
     )
-    args, remaining = parser.parse_known_args(argv)
-    args.provider_explicit = args.provider is not None
-    args.auth_explicit = args.auth is not None
+    namespace, remaining = parser.parse_known_args(argv)
+    given = cast(_GivenAgentFlags, namespace)
+    if given.removed_system is not None:
+        parser.error(
+            "--system was removed: use --append-system-prompt to add instructions,"
+            " or --system-prompt to replace the base prompt",
+        )
+    provider_explicit = given.provider is not None
+    auth_explicit = given.auth is not None
+    if given.provider is None:
+        given.provider = _DEFAULT_PROVIDER
+    if given.auth is None:
+        given.auth = _DEFAULT_AUTH
+    args = cast(AgentFlags, namespace)
+    args.provider_explicit = provider_explicit
+    args.auth_explicit = auth_explicit
     args.account_explicit = args.account is not None
     args.model_explicit = args.model is not None
-    if args.provider is None:
-        args.provider = _DEFAULT_PROVIDER
-    if args.auth is None:
-        args.auth = _DEFAULT_AUTH
     return args, remaining
 
 
@@ -497,10 +529,8 @@ def main() -> int:
     )
     headless = not sys.stdin.isatty()
     if not headless:
-        print_welcome(
-            folder=Path(loaded_session[2].bash_cwd) if loaded_session else Path.cwd(),
-            resumed=loaded_session is not None,
-        )
+        state = loaded_session[2] if loaded_session else None
+        print_welcome(folder=_welcome_folder(state), resumed=state is not None)
     try:
         provider, model, resolved_auth = _build_provider_model(
             args,
@@ -508,7 +538,7 @@ def main() -> int:
         )
         show_thinking = _apply_cli_thinking(args, model)
         if args.effort is not None:
-            model.settings.thinking_effort = cast(ThinkingEffort, args.effort)
+            model.settings.thinking_effort = args.effort
     except (AttributeError, FileNotFoundError, RuntimeError, ValueError) as e:
         sys.stderr.write(f"Error: {e}\n")
         return 1
@@ -533,13 +563,13 @@ def main() -> int:
         )
     compactor = SummaryCompactor() if args.compact else None
 
-    tool_names = args.tools or DEFAULT_TOOLS
+    context = _session_context(args)
     agent_tools = resolve_tools(
-        tool_names,
+        _session_tool_names(args, context),
         allow_providers=allow_providers,
         overrides=_parse_tool_flag(args.tool),
     )
-    if args.advisor:
+    if args.advisor is not None and args.advisor:
         advisor_model = provider.model(args.advisor)
         agent_tools.append(
             Advisor(model=advisor_model, max_uses=args.advisor_max_uses),
@@ -547,22 +577,14 @@ def main() -> int:
         if not headless:
             sys.stderr.write(f"[advisor] {advisor_model.tagged_model_id}\n")
 
-    custom_system = args.system
-
-    def _system() -> str:
-        return build_system(
-            model.capability,
-            custom=custom_system,
-            context=model.settings.context,
-            include_memory=not args.ephemeral,
-        )
-
     agent = Agent(
         name=args.name,
         description="Interactive CLI agent.",
         model=model,
         model_recipe=model_recipe,
-        system=_system,
+        system=static_prompt() if args.system_prompt is None else args.system_prompt,
+        append_system=args.append_system_prompt,
+        prompt_context=context,
         tools=agent_tools,
         compactor=compactor,
         session_dir=session_dir,
@@ -620,15 +642,115 @@ def main() -> int:
     return 0
 
 
-def _do_login(args: argparse.Namespace) -> None:
+class AgentFlags(Protocol):
+    """Flags :func:`parse_agent_args` registers, plus what it derives from them."""
+
+    provider: str
+    auth: str
+    account: str | None
+    allow_providers: str
+    headless: bool
+    model: str | None
+    removed_system: str | None
+    system_prompt: str | None
+    append_system_prompt: str
+    recipe: str | None
+    compact: bool
+    server_side_context_management: bool | None
+    thinking: str
+    effort: ThinkingEffort | None
+    tools: list[str] | None
+    add_dir: list[str]
+    max_budget_usd: float | None
+    max_tool_call_rounds: int | None
+    max_request_tokens: int | None
+    max_response_tokens: int | None
+    provider_explicit: bool
+    auth_explicit: bool
+    account_explicit: bool
+    model_explicit: bool
+
+
+class Flags(AgentFlags, Protocol):
+    """Parsed command-line flags of the ``sagent`` CLI."""
+
+    session: str | None
+    tool: list[str]
+    ephemeral: bool
+    output_format: Literal["text", "json", "stream-json"]
+    input_format: Literal["text", "stream-json"]
+    resume: str | Literal[True] | None
+    continue_: bool
+    resume_all: bool
+    continue_all: bool
+    resume_limit: int
+    resume_persistent: bool
+    name: str
+    history: Path | None
+    advisor: str | None
+    advisor_max_uses: int | None
+    log_level: str | None
+    provider_from_resume: bool
+    auth_from_resume: bool
+
+
+@runtime_checkable
+class InteractiveLogin(Protocol):
+    """A provider class that runs an OAuth flow and persists what it returns."""
+
+    def login(
+        self,
+        output: IO[str] | None = None,
+        *,
+        account: str | None = None,
+        manual: bool = False,
+    ) -> object:
+        """Run the flow; return the credentials ``save`` persists."""
+        ...
+
+    def save(self, creds: object, *, account: str | None = None) -> None:
+        """Persist what :meth:`login` returned under ``account``."""
+        ...
+
+
+# An ephemeral session leaves nothing behind, its memories included.
+def _welcome_folder(state: ToolState | None) -> Path:
+    """Return the folder the welcome names: the resumed session's, else the cwd."""
+    return Path(state.bash_cwd) if state is not None else Path.cwd()
+
+
+def _session_context(args: Flags) -> SagentContext:
+    """Return the project context this session tells its agents."""
+    return SagentContext(include_memory=not args.ephemeral)
+
+
+# A Memory tool the user named explicitly is refused rather than dropped, which would
+# let them believe their memories were being saved.
+def _session_tool_names(
+    args: Flags,
+    context: SagentContext,
+) -> list[str]:
+    """Return the tools this session loads, per ``--tools`` and its ``context``."""
+    if args.tools is not None and "Memory" in args.tools and not context.shows_memory:
+        why = "--ephemeral saves" if args.ephemeral else "this recipe shows"
+        raise SystemExit(f"{why} no memories; drop Memory from --tools.")
+    return _memory_shown(args.tools or DEFAULT_TOOLS, context)
+
+
+# A save lands in the index the model reads next context; where it reads none, the
+# memory is written for nobody.
+def _memory_shown(names: Iterable[str], context: SagentContext) -> list[str]:
+    """Return ``names``, less Memory unless ``context`` shows the index it writes."""
+    return [name for name in names if name != "Memory" or context.shows_memory]
+
+
+def _do_login(args: AgentFlags) -> None:
     """Run the OAuth flow for ``args.provider`` and save under ``args.account``."""
     cls = getattr(providers, args.provider, None)
     if cls is None:
         sys.stderr.write(f"Error: unknown provider {args.provider!r}\n")
         sys.exit(1)
-    login_fn = getattr(cls, "login", None)
-    save_fn = getattr(cls, "save", None)
-    if login_fn is None or save_fn is None:
+    if not isinstance(cls, InteractiveLogin):
         if args.provider == "AnthropicCLI":
             if args.account not in (None, "default"):
                 sys.stderr.write(
@@ -647,8 +769,8 @@ def _do_login(args: argparse.Namespace) -> None:
         sys.exit(1)
     account = args.account or "default"
     sys.stderr.write(f"[login] provider={args.provider} account={account!r}\n")
-    creds = login_fn(output=sys.stderr, account=args.account, manual=args.headless)
-    save_fn(creds, account=args.account)
+    creds = cls.login(output=sys.stderr, account=args.account, manual=args.headless)
+    cls.save(creds, account=args.account)
     sys.stderr.write(f"[login] saved credentials for account '{account}'.\n")
 
 
@@ -660,10 +782,7 @@ def _default_allow_providers() -> tuple[str, ...]:
     return (_DEFAULT_PROVIDER, *rest)
 
 
-# Values are ``Any`` deliberately: the result is splatted into a tool constructor whose
-# signature varies per tool, and the values were already validated against that
-# signature by ``coerce_kwargs``.
-def _tool_kwargs(cls: type, overrides: Mapping[str, str]) -> dict[str, Any]:
+def _tool_kwargs(cls: type, overrides: Mapping[str, str]) -> dict[str, object]:
     """Coerce ``--tool`` overrides for ``cls``, exiting on a bad key."""
     if not overrides:
         return {}
@@ -671,6 +790,20 @@ def _tool_kwargs(cls: type, overrides: Mapping[str, str]) -> dict[str, Any]:
         return coerce_kwargs(cls, overrides)
     except ToolSpecError as exc:
         raise SystemExit(str(exc)) from exc
+
+
+# Typed as any callable on purpose: each tool's signature differs, and
+# `coerce_kwargs` already checked every value against the one being built.
+def _build_tool(
+    name: str,
+    cls: Callable[..., object],
+    kwargs: Mapping[str, object],
+) -> Tool:
+    """Construct tool ``name`` from ``kwargs``, exiting if ``cls`` builds no Tool."""
+    tool = cls(**kwargs)
+    if not isinstance(tool, Tool):
+        raise SystemExit(f"not a tool: {name!r}")
+    return tool
 
 
 def _parse_tool_flag(specs: list[str]) -> dict[str, dict[str, str]]:
@@ -706,10 +839,10 @@ def _positive_float(raw: str) -> float:
     return value
 
 
-def _resolve_session_dir(args: argparse.Namespace) -> str | None:
+def _resolve_session_dir(args: Flags) -> str | None:
     """Pick the session directory per --session / --resume / --continue."""
     if args.session is not None:
-        return str(args.session)
+        return args.session
     cwd = Path.cwd()
     if args.continue_:
         return _resolve_continue(cwd)
@@ -718,7 +851,7 @@ def _resolve_session_dir(args: argparse.Namespace) -> str | None:
     if args.resume is not None:
         if args.resume is True:
             return _resolve_resume(cwd, args.resume_limit)
-        return _resolve_resume_hash(str(args.resume), cwd)
+        return _resolve_resume_hash(args.resume, cwd)
     if args.resume_all:
         return _resolve_resume_all(args.resume_limit)
     return str(sessions.new_session_dir(cwd))
@@ -826,7 +959,7 @@ def _resolve_resume_all(pick_cap: int) -> str:
 def _parse_cli_args(
     parser: argparse.ArgumentParser,
     argv: list[str] | None = None,
-) -> tuple[argparse.Namespace, list[str]]:
+) -> tuple[Flags, list[str]]:
     """Add CLI-specific flags and delegate to ``parse_agent_args``."""
     # One session source per run: ``_resolve_session_dir`` honors only the first
     # it checks, and ``--ephemeral`` drops all of them.
@@ -960,7 +1093,9 @@ def _parse_cli_args(
             " headless mode writes to stderr. Overrides SAGENT_LOG_LEVEL."
         ),
     )
-    args, remaining = parse_agent_args(parser, argv)
+    agent_args, remaining = parse_agent_args(parser, argv)
+    # The flags registered above ride the same namespace.
+    args = cast(Flags, agent_args)
     # Set by ``main`` once a session is loaded; a fresh run pins nothing.
     args.provider_from_resume = False
     args.auth_from_resume = False
@@ -1021,7 +1156,7 @@ def _resolve_provider_and_allow(
 
 
 def _build_provider_model(
-    args: argparse.Namespace,
+    args: Flags,
     *,
     allow_providers: tuple[str, ...] = PROVIDER_NAMES,
 ) -> tuple[Provider, Model, str]:
@@ -1041,14 +1176,14 @@ def _build_provider_model(
 
 
 def _build_provider_model_once(
-    args: argparse.Namespace,
+    args: Flags,
 ) -> tuple[Provider, Model, str]:
     """Build one provider/model pair without fallback."""
-    provider_name = str(args.provider)
-    auth = str(args.auth)
+    provider_name = args.provider
+    auth = args.auth
     if not (args.auth_explicit or args.auth_from_resume):
         auth = default_auth_for_provider(provider_name)
-    model_id = cast(str | None, args.model)
+    model_id = args.model
     # SelfHosted encodes the auth (a local snapshot path) in ``--model`` and has
     # no symbolic tiers, so it always resolves to the provider's default model.
     if args.provider == "SelfHosted":
@@ -1066,7 +1201,7 @@ def _build_provider_model_once(
 
 
 def _build_provider_model_fallback(
-    args: argparse.Namespace,
+    args: Flags,
     error: Exception,
     *,
     allow_providers: tuple[str, ...],
@@ -1081,13 +1216,13 @@ def _build_provider_model_fallback(
     ):
         raise RuntimeError(
             _credential_error_message(
-                str(args.provider),
+                args.provider,
                 error,
                 allow_providers=allow_providers,
                 account=args.account,
             ),
         ) from error
-    original_provider = str(args.provider)
+    original_provider = args.provider
     for fallback_provider in _credential_fallback_providers(
         original_provider,
         allow_providers=allow_providers,
@@ -1197,9 +1332,9 @@ def _credential_error_message(
     return "\n".join(lines)
 
 
-def _apply_cli_thinking(args: argparse.Namespace, model: Model) -> bool:
+def _apply_cli_thinking(args: AgentFlags, model: Model) -> bool:
     """Apply ``--thinking`` to the model's settings; return the display flag."""
-    raw = str(args.thinking)
+    raw = args.thinking
     if raw == "default":
         return True
     settings = model.settings
@@ -1214,7 +1349,7 @@ def _apply_cli_thinking(args: argparse.Namespace, model: Model) -> bool:
     return apply_thinking_command(raw, settings, show=True)
 
 
-def _apply_resume_model_defaults(args: argparse.Namespace, meta: SessionMeta) -> None:
+def _apply_resume_model_defaults(args: Flags, meta: SessionMeta) -> None:
     """Layer persisted model metadata under explicit CLI model flags."""
     if meta.provider and not args.provider_explicit:
         args.provider = meta.provider
@@ -1230,7 +1365,7 @@ def _apply_resume_model_defaults(args: argparse.Namespace, meta: SessionMeta) ->
         if (
             args.provider_explicit
             and args.model is not None
-            and not _provider_knows_model(str(args.provider), str(args.model))
+            and not _provider_knows_model(args.provider, args.model)
         ):
             args.model = None
 
@@ -1287,14 +1422,17 @@ async def _resume_persistent_agents(
         )
 
 
-# ``system`` is the record's base prompt; ``resume_serviced_child`` adds the
-# persistent-agent IPC rule, so the next lifecycle record persists the base again.
+# ``system`` is the record's base prompt; ``resume_serviced_child`` gives the child its
+# persistent-agent IPC rule as a standing reminder, never in the prompt it persists.
 def _build_persistent_child(
     record: PersistentAgentRecord,
     *,
     allow_providers: tuple[str, ...],
 ) -> Agent:
     """Construct a persistent child from its lifecycle record."""
+    if record.frozen_system:
+        msg = "a hot spawn saved its parent's rendered prompt, not its own"
+        raise ValueError(msg)
     provider, account = build_provider_with_account_fallback(
         record.provider,
         record.auth,
@@ -1302,6 +1440,7 @@ def _build_persistent_child(
         fallback_to_default=True,
     )
     model = provider.model(record.model_id)
+    context = SagentContext()
     # ``take`` rather than assignment: a record written against a wider
     # model must not fail the resume on a knob this one withholds.
     model.settings.take(
@@ -1321,12 +1460,16 @@ def _build_persistent_child(
             account=account,
         ),
         system=record.system,
-        tools=resolve_tools(list(record.tools), allow_providers=allow_providers),
+        append_system=record.append_system,
+        prompt_context=context,
+        tools=resolve_tools(
+            _memory_shown(record.tools, context),
+            allow_providers=allow_providers,
+        ),
         session_dir=record.session_dir,
         max_tool_call_rounds=record.max_tool_call_rounds,
         max_budget_usd=record.max_budget_usd,
         persistent_retry=record.persistent_retry,
-        frozen_system=record.frozen_system,
     )
     if record.max_request_tokens is not None:
         agent.max_request_tokens = record.max_request_tokens
@@ -1632,6 +1775,14 @@ def _quit_handler(agent: Agent) -> Callable[[], None]:
         agent.runtime.inbox.push_back(Quit())
 
     return _on_signal
+
+
+class _GivenAgentFlags(Protocol):
+    """The flags :func:`parse_agent_args` defaults itself, as argparse left them."""
+
+    provider: str | None
+    auth: str | None
+    removed_system: str | None
 
 
 if __name__ == "__main__":

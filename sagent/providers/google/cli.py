@@ -34,7 +34,7 @@ import logging
 import os
 import shutil
 
-from treekle import MutablePlainTree, PlainTree, from_plain
+from treekle import MutablePlainTree, PlainTree, from_plain, json_loads
 
 import fastjsonschema
 
@@ -233,9 +233,9 @@ def save_cli_credentials_file(path: Path, creds: GoogleCLICredentials) -> None:
     existing: dict[str, MutablePlainTree] = {}
     if path.exists():
         with contextlib.suppress(json.JSONDecodeError, OSError):
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = json_loads(path.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
-                existing = cast(dict[str, MutablePlainTree], raw)
+                existing = raw
     existing["access_token"] = creds["access_token"]
     existing["refresh_token"] = creds["refresh_token"]
     existing["expiry_date"] = creds["expiry_date"]
@@ -249,7 +249,8 @@ def save_cli_credentials_file(path: Path, creds: GoogleCLICredentials) -> None:
 def _read_expiry(path: Path) -> float:
     """Return the ``expiry_date`` (JS millis) in ``path``, or ``0`` on any error."""
     with contextlib.suppress(OSError, json.JSONDecodeError, KeyError, ValueError):
-        return float(json.loads(path.read_text(encoding="utf-8"))["expiry_date"])
+        stored = json_loads(path.read_text(encoding="utf-8"), dict[str, object])
+        return from_plain(stored["expiry_date"], float, strict=False)
     return 0.0
 
 
@@ -555,11 +556,11 @@ class _GoogleCLIModel(CLISubprocessModel, ModelDefaults):
               server returned a JSON-RPC ``error`` field.
 
         """
-        self._pending_system = request.system
+        self._pending_system = request.system_text
         if self._hot_spare.active is not None:
             self._promote_proc_state(self._hot_spare.active)
         if self._should_respawn(request):
-            if hash_system(request.system) != self._system_hash:
+            if hash_system(request.system_text) != self._system_hash:
                 await self._hot_spare.discard_spare()
             await self._hot_spare.respawn()
             self._reset_active_state()
@@ -599,14 +600,17 @@ class _GoogleCLIModel(CLISubprocessModel, ModelDefaults):
             return False
         return self._respawn_due(
             request.messages,
-            system=request.system,
+            system=request.system_text,
             max_request_tokens=self.limits.max_request_tokens,
         )
 
     def _sync_tools_bridge(self, request: ModelRequest) -> None:
-        """Refresh the MCP bridge's tool registry to match the request."""
+        """Refresh the MCP bridge's tool registry and gate to match the request."""
         if self._tools_bridge is not None:
-            self._tools_bridge.update_tools(list(request.tools))
+            self._tools_bridge.update_tools(
+                list(request.tools),
+                allowed=request.allowed_tools,
+            )
 
     def _promote_proc_state(self, proc: Subproc) -> None:
         """Copy state from the active subprocess wrapper onto model fields."""
@@ -858,12 +862,12 @@ def _load_cli_credentials_file(path: Path) -> GoogleCLICredentials | None:
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict):
         return None
-    raw = cast(dict[str, MutablePlainTree], data)
+    raw = data
     try:
         _CREDENTIALS_VALIDATOR(raw)
     except fastjsonschema.JsonSchemaValueException:

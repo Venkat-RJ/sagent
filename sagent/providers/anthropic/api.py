@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Final, Protocol, cast, override
+from typing import TYPE_CHECKING, Final, Protocol, cast, override, runtime_checkable
 
 import asyncio
 import base64
@@ -56,7 +56,7 @@ else:
     image = lazy_import("sagent.lib.image")
 
 
-from treekle import MutablePlainTree, from_plain, mutable
+from treekle import MutablePlainTree, from_plain, json_loads, mutable
 
 from sagent.catalog.anthropic import api, usage_tokens
 from sagent.catalog.loader import models
@@ -133,6 +133,9 @@ class _AnthropicRawStreamSDK(Protocol):
 # Shared with the subscription provider, which adds the same beta header.
 REDACT_THINKING_BETA: Final = "redact-thinking-2026-02-12"
 _FAST_MODE_BETA: Final = "fast-mode-2026-02-01"
+_INLINE_TOOLS_BETA: Final = "inline-tools-2026-09-15"
+# The API's 4 cache marks, less the last message's.
+_SYSTEM_MARKS: Final = 3
 _DEFAULT_API_TARGET_INPUT_TOKENS = (
     40_000  # house-ignore[globals] -- Target input-token dial.
 )
@@ -363,24 +366,47 @@ class Anthropic:
 
     def build_system(
         self,
-        system: str,
+        system: tuple[str, ...],
         messages: list[anthropic.types.MessageParam] | None = None,
         *,
         cache_ttl: str = "5m",
-    ) -> list[anthropic.types.TextBlockParam] | str | anthropic.NotGiven:
+    ) -> list[anthropic.types.TextBlockParam] | anthropic.NotGiven:
         """Build the system prompt for an API call.
 
+        Each block is marked as a cache breakpoint: requests that share the
+        leading blocks but differ after them (sibling agents, one document
+        asked several questions) then reuse them, which the last-message mark
+        alone cannot give them.
+
         Args:
-          system: System prompt text, or empty to omit.
+          system: System prompt blocks, most stable first; empty ones are dropped.
           messages: Conversation messages (used by subscription subclass).
-          cache_ttl: Prompt-cache TTL (``5m`` or ``1h``) for providers using blocks.
+          cache_ttl: Prompt-cache TTL (``5m`` or ``1h``).
 
         Returns:
-          system_param: System prompt in API format, or ``NOT_GIVEN``.
+          system_param: Marked system blocks, or ``NOT_GIVEN`` when none.
 
         """
-        del messages, cache_ttl  # Unused in plain API mode.
-        return system or anthropic.NOT_GIVEN
+        del messages  # Unused in plain API mode.
+        texts = [text for text in system if text]
+        # A request may carry 4 ``cache_control`` marks and the last message takes
+        # one, so only the last three blocks are marked: each mark caches everything
+        # before it, so the earlier blocks stay cached under the first mark kept.
+        marked = len(texts) - _SYSTEM_MARKS
+        blocks = [
+            cast(
+                anthropic.types.TextBlockParam,
+                {"type": "text", "text": text}
+                if index < marked
+                else {
+                    "type": "text",
+                    "text": text,
+                    "cache_control": _cache_mark(cache_ttl),
+                },
+            )
+            for index, text in enumerate(texts)
+        ]
+        return blocks or anthropic.NOT_GIVEN
 
     def extra_headers(
         self,
@@ -578,20 +604,26 @@ def _tool_names_from_kwargs(kwargs: dict[str, object]) -> list[str | None]:
 
 def _request_id(e: BaseException) -> str:
     """Best-effort request-id extractor for an anthropic error; ``""`` if absent."""
-    rid = getattr(e, "request_id", None)
-    if rid:
-        return cast(str, rid)
-    resp = getattr(e, "response", None)
-    headers = getattr(resp, "headers", None)
-    if headers is not None:
+    rid: object = getattr(e, "request_id", None)
+    if isinstance(rid, str) and rid:
+        return rid
+    resp: object = getattr(e, "response", None)
+    headers: object = getattr(resp, "headers", None)
+    if isinstance(headers, _HeaderLookup):
         try:
-            return cast(
-                str,
-                headers.get("request-id") or headers.get("x-request-id") or "",
-            )
+            return headers.get("request-id") or headers.get("x-request-id") or ""
         except Exception:  # noqa: BLE001 -- best-effort extraction must not mask the original error.
             return ""
     return ""
+
+
+@runtime_checkable
+class _HeaderLookup(Protocol):
+    """Response headers, as the SDK's ``httpx`` response carries them."""
+
+    def get(self, key: str, /) -> str | None:
+        """Return the header's value, or ``None`` when absent."""
+        ...
 
 
 class _AnthropicModel(ModelDefaults):
@@ -823,6 +855,13 @@ class _AnthropicModel(ModelDefaults):
         if body is not None:
             kwargs["extra_body"] = body
         headers = self._provider.extra_headers(self.capability, self.settings)
+        if any(m.get("role") == "system" for m in messages):
+            # A tool change rides a ``role: system`` message, which this beta adds.
+            betas = [b for b in headers.get("anthropic-beta", "").split(",") if b]
+            headers = {
+                **headers,
+                "anthropic-beta": ",".join([*betas, _INLINE_TOOLS_BETA]),
+            }
         if self.settings.service_tier == "priority":
             # ``speed`` is a first-class parameter only on the SDK's beta
             # endpoints (``beta.messages.*``); the stream path here is a
@@ -976,14 +1015,12 @@ async def _stream_impl(
                 watchdog.reschedule(
                     loop.time() + _STREAM_IDLE_TIMEOUT,
                 )
-                delta = getattr(event, "delta", None)
-                if delta is None:
+                if event.type != "content_block_delta" or publish is None:
                     continue
-                delta_type = getattr(delta, "type", "")
-                if delta_type == "text_delta" and publish is not None:
-                    publish(ModelResponsePartial(delta.text))
-                elif delta_type == "thinking_delta" and publish is not None:
-                    publish(ModelResponseThinking(delta.thinking))
+                if event.delta.type == "text_delta":
+                    publish(ModelResponsePartial(event.delta.text))
+                elif event.delta.type == "thinking_delta":
+                    publish(ModelResponseThinking(event.delta.thinking))
             return await s.get_final_message()
 
 
@@ -1055,7 +1092,7 @@ async def _raise_anthropic_status_error(
     body_text = (await response.aread()).decode(errors="replace")
     body: object = body_text
     with contextlib.suppress(json.JSONDecodeError):
-        body = json.loads(body_text)
+        body = json_loads(body_text)
     message = body_text or f"Error code: {response.status_code}"
     raise sdk._make_status_error(message, body=body, response=response)  # noqa: SLF001 -- provider must preserve the SDK's status exception taxonomy.
 
@@ -1067,16 +1104,19 @@ def _cache_mark(ttl: str) -> dict[str, str]:
     return {"type": "ephemeral"}
 
 
+# A trailing tool change (a ``role: system`` message) is not a turn: the mark goes on
+# the turn before it, which is what the next request repeats.
 def _add_cache_breakpoint(
     messages: list[anthropic.types.MessageParam],
     ttl: str = "5m",
 ) -> None:
-    """Add cache_control to the last content block of the last message."""
+    """Add cache_control to the last content block of the last turn."""
     mark = _cache_mark(ttl)
-    last = messages[-1]
+    at = max(i for i, m in enumerate(messages) if m.get("role") != "system")
+    last = messages[at]
     raw_content: object = last.get("content")
     if isinstance(raw_content, str):
-        messages[-1] = cast(
+        messages[at] = cast(
             anthropic.types.MessageParam,
             {
                 **last,
@@ -1104,7 +1144,7 @@ def _add_cache_breakpoint(
                 }
                 break
         if blocks:
-            messages[-1] = cast(
+            messages[at] = cast(
                 anthropic.types.MessageParam,
                 {**last, "content": blocks},
             )
@@ -1126,6 +1166,18 @@ def _build_messages(
     ids = IdRemapper("toolu_")
     messages: list[anthropic.types.MessageParam] = []
     pending_tool_results: list[dict[str, object]] = []
+    # The API rejects a request with more than 4 ``cache_control`` blocks. Each
+    # system block and the last message take one; the newest cache points get
+    # what is left, as the ones nearest the reusable end.
+    room = _SYSTEM_MARKS - min(
+        _SYSTEM_MARKS,
+        sum(1 for block in request.system if block),
+    )
+    points = [
+        e.id for e in request.messages if isinstance(e, UserMessage) and e.cache_point
+    ]
+    marked = set(points[len(points) - room :] if room > 0 else ())
+    offered = [t.name for t in request.tools]
 
     for entry in request.messages:
         if isinstance(entry, (AgentSendMessage, UserMessage)):
@@ -1135,7 +1187,7 @@ def _build_messages(
             # role=user wire message that holds the pending tool_results.
             # Emitting a separate role=user message breaks Anthropic's
             # strict alternation and triggers HTTP 400.
-            if isinstance(entry, UserMessage) and entry.cache_point and blocks:
+            if isinstance(entry, UserMessage) and entry.id in marked and blocks:
                 blocks[-1] = {**blocks[-1], "cache_control": _cache_mark(cache_ttl)}
             if pending_tool_results:
                 pending_tool_results.extend(blocks)
@@ -1147,6 +1199,20 @@ def _build_messages(
                         {"role": "user", "content": blocks},
                     ),
                 )
+            # Every schema stays in ``tools``; a gate change withdraws or restores
+            # tools from here on, so nothing before it changes and it stays cached.
+            # Materialization puts the offer on the user turn its system message folded into.
+            if isinstance(entry, UserMessage) and entry.offered_tools is not None:
+                now = [t.name for t in request.tools if t.name in entry.offered_tools]
+                change = _tool_changes(before=offered, after=now)
+                offered = now
+                if change:
+                    messages.append(
+                        cast(
+                            anthropic.types.MessageParam,
+                            {"role": "system", "content": change},
+                        ),
+                    )
         elif isinstance(entry, AssistantMessage):
             _flush_tool_results(messages, pending_tool_results)
             blocks = _assistant_blocks(entry, ids)
@@ -1170,6 +1236,21 @@ def _build_messages(
         _add_cache_breakpoint(messages, cache_ttl)
 
     return messages
+
+
+def _tool_changes(*, before: list[str], after: list[str]) -> list[dict[str, object]]:
+    """Return the ``tool_removal``/``tool_addition`` blocks taking ``before`` to ``after``."""
+    changes: list[dict[str, object]] = []
+    for kind, names, other in (
+        ("tool_removal", before, after),
+        ("tool_addition", after, before),
+    ):
+        changes.extend(
+            {"type": kind, "tool": {"type": "tool_reference", "name": name}}
+            for name in names
+            if name not in other
+        )
+    return changes
 
 
 def _user_blocks(

@@ -28,9 +28,9 @@ checkout being tested. Both used the same virtual environment, with the working
 directory `/tmp/sagent-welcome-demo` (shown as `/private/tmp/...` on macOS).
 
 ```bash
-python -m sagent.bin.cli \
+python -m sagent \
   --provider OpenAISubscription --model sol-6.1 \
-  --tools none --recipe bare --no-compact \
+  --tools none --no-compact \
   --ephemeral --no-resume-persistent \
   --history /tmp/sagent-welcome-review-history
 ```
